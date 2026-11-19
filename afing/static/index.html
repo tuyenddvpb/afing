@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>afing – Thiết bị trong mạng</title>
+<style>
+  :root {
+    --bg: #f4f6f8; --card: #fff; --text: #17202a; --muted: #66727f; --line: #e3e8ed;
+    --accent: #0b6bcb; --on: #17a34a; --off: #a4adb7; --warn: #c2410c; --hover: #f0f5fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1419; --card: #182028; --text: #e6ebf0; --muted: #8b98a5; --line: #2a343f;
+      --accent: #58a6ff; --on: #3fb950; --off: #5b6672; --warn: #f0883e; --hover: #1f2933;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 14px; margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .meta { color: var(--muted); font-size: 13px; }
+  .meta b { color: var(--text); font-weight: 600; }
+  .live { margin-left: auto; font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .live::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                  background: var(--on); margin-right: 6px; animation: pulse 2s infinite; }
+  .live.down::before { background: var(--warn); animation: none; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .stat, .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+  .stat { padding: 12px 14px; }
+  .stat .n { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stat .l { color: var(--muted); font-size: 12px; }
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .toolbar input { flex: 1; min-width: 160px; padding: 7px 10px; border: 1px solid var(--line);
+                   border-radius: 7px; background: var(--bg); color: var(--text); font: inherit; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button { border: 0; background: none; color: var(--muted); padding: 7px 12px; font: inherit; cursor: pointer; }
+  .seg button.active { background: var(--accent); color: #fff; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td:first-child { min-width: 220px; }
+  th { font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; user-select: none; }
+  th.sorted::after { content: " ▲"; font-size: 9px; }
+  th.sorted.desc::after { content: " ▼"; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: var(--hover); }
+  tr.offline td { color: var(--muted); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--off); margin-right: 8px; }
+  .online .dot { background: var(--on); }
+  .name { font-weight: 600; cursor: pointer; white-space: normal; }
+  .name:hover { text-decoration: underline dotted; }
+  .sub { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 4px;
+         margin-left: 6px; background: var(--hover); color: var(--accent); border: 1px solid var(--line); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+  .empty { padding: 28px; text-align: center; color: var(--muted); }
+  #events { list-style: none; margin: 0; padding: 0; max-height: 640px; overflow-y: auto; }
+  #events li { padding: 9px 14px; border-bottom: 1px solid var(--line); }
+  #events li:last-child { border-bottom: 0; }
+  .ev-type { font-weight: 600; }
+  .ev-new .ev-type { color: var(--accent); }
+  .ev-online .ev-type { color: var(--on); }
+  .ev-offline .ev-type { color: var(--muted); }
+  .ev-ip_change .ev-type { color: var(--warn); }
+  .ev-time { float: right; color: var(--muted); font-size: 12px; }
+  .error { background: var(--card); border: 1px solid var(--warn); color: var(--warn);
+           border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: minmax(0, 1fr); }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>afing</h1>
+    <span class="meta" id="netinfo">Đang tải…</span>
+    <span class="live" id="live">đang kết nối…</span>
+  </header>
+  <div class="error" id="error" hidden></div>
+  <div class="stats">
+    <div class="stat"><div class="n" id="s-online">–</div><div class="l">Đang trực tuyến</div></div>
+    <div class="stat"><div class="n" id="s-offline">–</div><div class="l">Ngoại tuyến</div></div>
+    <div class="stat"><div class="n" id="s-total">–</div><div class="l">Tổng số đã thấy</div></div>
+    <div class="stat"><div class="n" id="s-new">–</div><div class="l">Mới trong 24 giờ</div></div>
+  </div>
+  <div class="grid">
+    <section class="card">
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="Tìm theo tên, IP, MAC, hãng…" aria-label="Tìm thiết bị">
+        <div class="seg" id="filter">
+          <button data-f="all" class="active">Tất cả</button>
+          <button data-f="online">Trực tuyến</button>
+          <button data-f="offline">Ngoại tuyến</button>
+        </div>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr>
+            <th data-k="name">Thiết bị</th>
+            <th data-k="ip" class="sorted">IP</th>
+            <th data-k="mac">MAC</th>
+            <th data-k="vendor">Hãng sản xuất</th>
+            <th data-k="first_seen">Thấy lần đầu</th>
+            <th data-k="last_seen">Thấy gần nhất</th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty" id="empty" hidden>Chưa có thiết bị nào khớp.</div>
+      </div>
+    </section>
+    <aside class="card">
+      <h2>Hoạt động gần đây</h2>
+      <ul id="events"></ul>
+      <div class="empty" id="no-events">Chưa có sự kiện.</div>
+    </aside>
+  </div>
+</div>
+<script>
+const POLL_MS = 3000;
+const EVENT_LABELS = { new: "Thiết bị mới", online: "Kết nối lại", offline: "Rời mạng", ip_change: "Đổi IP" };
+const $ = (id) => document.getElementById(id);
+let state = null, filter = "all", sortKey = "ip", sortDesc = false, editing = false;
+
+// Mọi dữ liệu từ mạng (tên máy, hãng...) đều không đáng tin: chỉ chèn qua textContent.
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function displayName(d) {
+  return d.custom_name || d.hostname || (d.is_gateway ? "Router / Gateway" : "") ||
+         (d.vendor ? "Thiết bị " + d.vendor : "Không rõ tên");
+}
+
+function ago(ts, now) {
+  const s = Math.max(0, now - ts);
+  if (s < 20) return "vừa xong";
+  if (s < 60) return s + " giây trước";
+  if (s < 3600) return Math.floor(s / 60) + " phút trước";
+  if (s < 86400) return Math.floor(s / 3600) + " giờ trước";
+  return Math.floor(s / 86400) + " ngày trước";
+}
+
+function fullTime(ts) { return new Date(ts * 1000).toLocaleString("vi-VN"); }
+function ipNum(ip) { return ip.split(".").reduce((n, p) => n * 256 + Number(p), 0); }
+
+function sortValue(d) {
+  if (sortKey === "ip") return ipNum(d.ip);
+  if (sortKey === "name") return displayName(d).toLowerCase();
+  if (sortKey === "first_seen" || sortKey === "last_seen") return d[sortKey];
+  return (d[sortKey] || "").toLowerCase();
+}
+
+function render() {
+  if (!state || editing) return;
+  const { devices, events, status, now } = state;
+
+  const info = $("netinfo");
+  info.replaceChildren(
+    "Mạng ", el("b", null, status.network),
+    " · máy quét ", el("b", null, status.local_ip),
+    " · quét mỗi " + status.interval + " giây (" + status.method + ")"
+  );
+  $("error").hidden = !status.error;
+  $("error").textContent = status.error ? "Lượt quét gần nhất lỗi: " + status.error : "";
+
+  const online = devices.filter((d) => d.is_online).length;
+  $("s-online").textContent = online;
+  $("s-offline").textContent = devices.length - online;
+  $("s-total").textContent = devices.length;
+  $("s-new").textContent = devices.filter((d) => now - d.first_seen < 86400).length;
+
+  const q = $("search").value.trim().toLowerCase();
+  const shown = devices
+    .filter((d) => filter === "all" || (filter === "online") === !!d.is_online)
+    .filter((d) => !q || [displayName(d), d.hostname, d.ip, d.mac, d.vendor]
+      .some((v) => v && v.toLowerCase().includes(q)))
+    .sort((a, b) => {
+      const x = sortValue(a), y = sortValue(b);
+      return (x < y ? -1 : x > y ? 1 : 0) * (sortDesc ? -1 : 1);
+    });
+
+  $("rows").replaceChildren(...shown.map((d) => {
+    const tr = el("tr", d.is_online ? "online" : "offline");
+    const nameTd = el("td");
+    nameTd.append(el("span", "dot"));
+    const name = el("span", "name", displayName(d));
+    name.title = "Bấm để đặt tên";
+    name.onclick = () => rename(d);
+    nameTd.append(name);
+    if (d.is_self) nameTd.append(el("span", "tag", "máy này"));
+    if (d.is_gateway) nameTd.append(el("span", "tag", "gateway"));
+    if (d.custom_name && d.hostname) nameTd.append(el("span", "sub", d.hostname));
+    const first = el("td", null, ago(d.first_seen, now)); first.title = fullTime(d.first_seen);
+    const last = el("td", null, d.is_online ? "đang trực tuyến" : ago(d.last_seen, now));
+    last.title = fullTime(d.last_seen);
+    tr.append(nameTd, el("td", "mono", d.ip), el("td", "mono", d.mac),
+              el("td", null, d.vendor || "—"), first, last);
+    return tr;
+  }));
+  $("empty").hidden = shown.length > 0;
+
+  $("events").replaceChildren(...events.map((e) => {
+    const li = el("li", "ev-" + e.type);
+    const time = el("span", "ev-time", ago(e.ts, now)); time.title = fullTime(e.ts);
+    const who = e.name || (e.vendor ? "Thiết bị " + e.vendor : e.mac);
+    li.append(time, el("span", "ev-type", EVENT_LABELS[e.type] || e.type), el("br"),
+              who, el("span", "sub mono", e.detail || e.ip || ""));
+    return li;
+  }));
+  $("no-events").hidden = events.length > 0;
+}
+
+async function rename(d) {
+  editing = true;
+  const name = prompt("Đặt tên cho " + d.mac + " (" + d.ip + ")\nĐể trống để dùng lại tên tự dò.",
+                      d.custom_name || d.hostname || "");
+  editing = false;
+  if (name === null) return;
+  await fetch("/api/devices/" + d.mac + "/name", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  poll();
+}
+
+async function poll() {
+  const live = $("live");
+  try {
+    const res = await fetch("/api/state", { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    state = await res.json();
+    live.classList.remove("down");
+    live.textContent = state.status.last_scan
+      ? "quét lần cuối " + ago(state.status.last_scan, state.now)
+      : "đang quét lượt đầu…";
+    render();
+  } catch (err) {
+    live.classList.add("down");
+    live.textContent = "mất kết nối tới afing";
+  }
+}
+
+$("search").addEventListener("input", render);
+$("filter").addEventListener("click", (e) => {
+  if (!e.target.dataset.f) return;
+  filter = e.target.dataset.f;
+  for (const b of $("filter").children) b.classList.toggle("active", b === e.target);
+  render();
+});
+document.querySelector("thead").addEventListener("click", (e) => {
+  const k = e.target.dataset.k;
+  if (!k) return;
+  sortDesc = sortKey === k ? !sortDesc : false;
+  sortKey = k;
+  for (const th of document.querySelectorAll("th")) {
+    th.classList.toggle("sorted", th === e.target);
+    th.classList.toggle("desc", th === e.target && sortDesc);
+  }
+  render();
+});
+
+poll();
+setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>
