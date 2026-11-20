@@ -311,6 +311,8 @@ def identify(ips: Iterable[str], local_ip: str) -> Dict[str, Dict[str, str]]:
         m, u = mdns.get(ip, {}), ssdp.get(ip, {})
         info = {
             "name": m.get("name") or u.get("name") or host.get(ip),
+            # tên thiết bị tự quảng bá (3) đáng tin hơn tên máy tra qua DNS/NetBIOS (1)
+            "name_rank": 3 if m.get("name") or u.get("name") else 1 if host.get(ip) else None,
             "model": m.get("model") or u.get("model"),
             "services": m.get("services"),
             "upnp_type": u.get("upnp_type"),

@@ -182,7 +182,8 @@ function render() {
   info.replaceChildren(
     "Mạng ", el("b", null, status.network),
     " · máy quét ", el("b", null, status.local_ip),
-    " · quét mỗi " + status.interval + " giây (" + status.method + ")"
+    " · quét mỗi " + status.interval + " giây (" + status.method + ")",
+    " · DHCP " + (status.dhcp ? "đang nghe (" + status.dhcp_packets + " gói)" : "tắt")
   );
   $("error").hidden = !status.error;
   $("error").textContent = status.error ? "Lượt quét gần nhất lỗi: " + status.error : "";

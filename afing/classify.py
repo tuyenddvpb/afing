@@ -99,6 +99,23 @@ def _from_upnp(upnp_type: str) -> Guess:
     return None, None
 
 
+def _from_dhcp(vendor_class: str, fingerprint: str) -> Guess:
+    """Vendor class (option 60) là dấu hiệu chắc; Apple không gửi nên phải nhìn vân tay (option 55)."""
+    vc = vendor_class.lower()
+    if vc.startswith("msft"):
+        return "computer", "Windows"
+    m = re.match(r"android-dhcp-(\d+)", vc)
+    if m:
+        return "mobile", f"Android {m.group(1)}"
+    if vc.startswith("dhcpcd") or "udhcp" in vc or "linux" in vc:
+        return None, "Linux"  # máy tính, router hay đồ IoT đều có thể chạy Linux
+    params = fingerprint.split(",")
+    if not vc and fingerprint.startswith("1,121,3,6,15") and "119" in params and "252" in params:
+        # Thiết bị Apple. macOS xin thêm option 95 (LDAP); iOS/iPadOS thì không.
+        return ("computer", "macOS") if "95" in params else ("mobile", "iOS")
+    return None, None
+
+
 def classify(
     vendor: Optional[str] = None,
     name: Optional[str] = None,
@@ -107,9 +124,14 @@ def classify(
     upnp_type: Optional[str] = None,
     sources: Iterable[str] = (),
     is_gateway: bool = False,
+    dhcp: Optional[dict] = None,
 ) -> Guess:
-    """Trả (mã loại, hệ điều hành); phần nào không đủ dấu hiệu thì là None."""
-    text = " ".join(filter(None, (name, model))).lower()
+    """Trả (mã loại, hệ điều hành); phần nào không đủ dấu hiệu thì là None.
+
+    `dhcp` là thông tin nghe được từ gói DHCP: {"hostname", "vendor_class", "fingerprint"}.
+    """
+    dhcp = dhcp or {}
+    text = " ".join(filter(None, (name, model, dhcp.get("hostname")))).lower()
     vendor_l = (vendor or "").lower()
     services, sources = set(services), set(sources)
 
@@ -119,6 +141,7 @@ def classify(
         _from_services(services, text),
         _match(TEXT_RULES, text),
         _from_upnp(upnp_type or ""),
+        _from_dhcp(dhcp.get("vendor_class") or "", dhcp.get("fingerprint") or ""),
         _match(VENDOR_RULES, vendor_l),
         # Trả lời NetBIOS mà không phải máy in/NAS/TV (đã bắt ở trên) thì gần như chắc là Windows.
         ("computer", "Windows") if "nb" in sources else (None, None),
@@ -126,7 +149,7 @@ def classify(
                                           "_sftp-ssh._tcp", "_rfb._tcp"} else (None, None),
     ]
     type_ = next((t for t, _ in guesses if t), None)
-    os_ = next((o for t, o in guesses if o and t == type_), None)
+    os_ = next((o for t, o in guesses if o and t in (type_, None)), None)
 
     if not os_:
         both = text + " " + vendor_l

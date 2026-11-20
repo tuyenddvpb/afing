@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS devices (
     model       TEXT,             -- model thiết bị tự khai (mDNS/UPnP)
     device_type TEXT,             -- mã loại suy đoán (xem classify.TYPES)
     os          TEXT,             -- hệ điều hành suy đoán
+    name_rank   INTEGER,          -- độ tin cậy của hostname: 3 mDNS/UPnP, 2 DHCP, 1 DNS/NetBIOS
     is_online   INTEGER NOT NULL DEFAULT 1,
     is_self     INTEGER NOT NULL DEFAULT 0,
     is_gateway  INTEGER NOT NULL DEFAULT 0,
@@ -29,6 +30,13 @@ CREATE TABLE IF NOT EXISTS events (
     detail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+CREATE TABLE IF NOT EXISTS dhcp_clients (  -- thông tin nghe được từ gói DHCP, theo MAC
+    mac          TEXT PRIMARY KEY,
+    hostname     TEXT,
+    vendor_class TEXT,
+    fingerprint  TEXT,
+    last_seen    INTEGER NOT NULL
+);
 """
 
 
@@ -41,9 +49,10 @@ class Database:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(SCHEMA)
             columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(devices)")}
-            for column in ("model", "device_type", "os"):  # DB tạo từ bản cũ
+            for column, kind in (("model", "TEXT"), ("device_type", "TEXT"), ("os", "TEXT"),
+                                 ("name_rank", "INTEGER")):  # DB tạo từ bản cũ
                 if column not in columns:
-                    self._conn.execute(f"ALTER TABLE devices ADD COLUMN {column} TEXT")
+                    self._conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {kind}")
 
     def close(self) -> None:
         with self._lock:
@@ -103,14 +112,42 @@ class Database:
         return events
 
     def set_identities(self, info_by_mac: Dict[str, dict]) -> None:
-        """Ghi {mac: {"name", "model", "type", "os"}} vừa dò được; thiếu khoá thì giữ giá trị cũ."""
+        """Ghi {mac: {"name", "name_rank", "model", "type", "os"}} vừa dò được.
+
+        Thiếu khoá thì giữ giá trị cũ. Tên chỉ bị thay khi tên mới đáng tin bằng hoặc hơn tên cũ,
+        để tên tốt (vd từ mDNS) không bị tên kém hơn ghi đè ở lượt dò mà mDNS không trả lời.
+        """
         with self._lock, self._conn:
             self._conn.executemany(
-                "UPDATE devices SET hostname=COALESCE(?, hostname), model=COALESCE(?, model),"
-                " device_type=COALESCE(?, device_type), os=COALESCE(?, os) WHERE mac=?",
-                [(i.get("name"), i.get("model"), i.get("type"), i.get("os"), mac)
+                "UPDATE devices SET"
+                " hostname=CASE WHEN :ok THEN :name ELSE hostname END,"
+                " name_rank=CASE WHEN :ok THEN :rank ELSE name_rank END,"
+                " model=COALESCE(:model, model), device_type=COALESCE(:type, device_type),"
+                " os=COALESCE(:os, os) WHERE mac=:mac"
+                .replace(":ok", "(:name IS NOT NULL AND :rank >= COALESCE(name_rank, 0))"),
+                [{"name": i.get("name"), "rank": i.get("name_rank") or 1, "model": i.get("model"),
+                  "type": i.get("type"), "os": i.get("os"), "mac": mac}
                  for mac, i in info_by_mac.items()],
             )
+
+    def record_dhcp(self, info: dict, now: int) -> None:
+        """Lưu thông tin từ một gói DHCP; gói sau thiếu trường nào thì giữ giá trị cũ của trường đó."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO dhcp_clients (mac, hostname, vendor_class, fingerprint, last_seen)"
+                " VALUES (:mac, :hostname, :vendor_class, :fingerprint, :now)"
+                " ON CONFLICT(mac) DO UPDATE SET"
+                " hostname=COALESCE(excluded.hostname, hostname),"
+                " vendor_class=COALESCE(excluded.vendor_class, vendor_class),"
+                " fingerprint=COALESCE(excluded.fingerprint, fingerprint),"
+                " last_seen=excluded.last_seen",
+                {**info, "now": now},
+            )
+
+    def dhcp_clients(self) -> Dict[str, dict]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM dhcp_clients").fetchall()
+        return {r["mac"]: dict(r) for r in rows}
 
     def set_custom_name(self, mac: str, name: Optional[str]) -> bool:
         with self._lock, self._conn:

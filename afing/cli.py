@@ -5,9 +5,11 @@ import ipaddress
 import logging
 import os
 import threading
+import time
 
 from . import __version__
 from .db import Database
+from .dhcp import DhcpListener, why_unavailable
 from .classify import TYPES
 from .monitor import Monitor, describe
 from .discovery import identify
@@ -24,9 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="afing", description="Quét và theo dõi thiết bị trong mạng LAN/Wi-Fi."
     )
     p.add_argument("--version", action="version", version=f"afing {__version__}")
-    p.add_argument("command", nargs="?", default="run", choices=["run", "scan", "update-oui"],
+    p.add_argument("command", nargs="?", default="run", choices=["run", "scan", "dhcp", "update-oui"],
                    help="run: quét liên tục + web (mặc định) | scan: quét 1 lần rồi in ra |"
-                        " update-oui: tải bảng hãng sản xuất")
+                        " dhcp: chỉ nghe và in gói DHCP (để thử) | update-oui: tải bảng hãng sản xuất")
     p.add_argument("--subnet", help="subnet cần quét, vd 192.168.1.0/24 (mặc định: tự dò)")
     p.add_argument("--interval", type=int, default=10, help="số giây giữa 2 lượt quét (10)")
     p.add_argument("--offline-after", type=int, default=45,
@@ -38,9 +40,37 @@ def build_parser() -> argparse.ArgumentParser:
                    help="địa chỉ web lắng nghe; dùng 0.0.0.0 để máy khác trong LAN xem được")
     p.add_argument("--port", type=int, default=8080, help="cổng web (8080)")
     p.add_argument("--no-web", action="store_true", help="chỉ quét và ghi DB, không mở web")
+    p.add_argument("--no-dhcp", action="store_true",
+                   help="không nghe gói DHCP (mặc định có nghe nếu đủ quyền mở cổng 67)")
     p.add_argument("--no-oui-download", action="store_true",
                    help="không tự tải bảng hãng sản xuất từ IEEE ở lần chạy đầu")
     return p
+
+
+def listen_dhcp(oui: OuiTable) -> int:
+    """Lệnh `dhcp`: in từng gói DHCP nghe được kèm loại/hệ điều hành suy ra, để kiểm tra nhanh."""
+    def show(info):
+        vendor = oui.lookup(info["mac"])
+        d = describe({}, vendor, False, info)
+        print(f"{time.strftime('%H:%M:%S')}  {info['type']:<9}{info['requested_ip'] or '?':<16}"
+              f"{info['mac']}  tên={info['hostname'] or '-'}  "
+              f"loại={TYPES.get(d['type'], '-')}  hđh={d['os'] or '-'}  "
+              f"vendor-class={info['vendor_class'] or '-'}  vân-tay={info['fingerprint'] or '-'}",
+              flush=True)
+
+    try:
+        listener = DhcpListener(show).start()
+    except OSError as e:
+        print(f"Lỗi: {why_unavailable(e)}")
+        return 1
+    print("Đang nghe DHCP. Tắt rồi bật lại Wi-Fi trên một thiết bị để thấy gói của nó. "
+          "Ctrl+C để dừng.", flush=True)
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        listener.stop()
+    return 0
 
 
 def main(argv=None) -> int:
@@ -52,6 +82,9 @@ def main(argv=None) -> int:
     if args.command == "update-oui":
         print(f"Đã tải {oui.download()} hãng sản xuất về {oui.path}")
         return 0
+
+    if args.command == "dhcp":
+        return listen_dhcp(oui)
 
     try:
         net = detect(args.subnet)
@@ -86,6 +119,14 @@ def main(argv=None) -> int:
 
     db = Database(args.db)
     monitor = Monitor(net, scanner, db, oui, args.interval, args.offline_after)
+    listener = None
+    if not args.no_dhcp:
+        try:
+            listener = DhcpListener(monitor.on_dhcp).start()
+            monitor.status["dhcp"] = True
+            log.info("Đang nghe DHCP: tên thiết bị sẽ hiện khi chúng kết nối (lại) vào mạng")
+        except OSError as e:
+            log.info("Không nghe DHCP (%s)", why_unavailable(e))
     thread = monitor.start()
     try:
         if args.no_web:
@@ -99,6 +140,8 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        if listener:
+            listener.stop()
         monitor.stop()
         thread.join(5)
         db.close()

@@ -25,14 +25,20 @@ EVENT_LABELS = {
 }
 
 
-def describe(info: dict, vendor: Optional[str], is_gateway: bool) -> dict:
-    """Gộp kết quả dò của một thiết bị với loại + hệ điều hành suy đoán."""
+def describe(info: dict, vendor: Optional[str], is_gateway: bool,
+             dhcp: Optional[dict] = None) -> dict:
+    """Gộp kết quả dò của một thiết bị với thông tin DHCP và loại + hệ điều hành suy đoán."""
+    name, rank = info.get("name"), info.get("name_rank") or 1
+    dhcp_name = (dhcp or {}).get("hostname")
+    if dhcp_name and (not name or rank < 2):
+        name, rank = dhcp_name, 2  # tên máy tự khai qua DHCP tốt hơn tên tra qua DNS/NetBIOS
     type_, os_ = classify(
-        vendor=vendor, name=info.get("name"), model=info.get("model"),
+        vendor=vendor, name=name, model=info.get("model"),
         services=info.get("services") or (), upnp_type=info.get("upnp_type"),
-        sources=info.get("sources") or (), is_gateway=is_gateway,
+        sources=info.get("sources") or (), is_gateway=is_gateway, dhcp=dhcp,
     )
-    return {"name": info.get("name"), "model": info.get("model"), "type": type_, "os": os_}
+    return {"name": name, "name_rank": rank if name else None, "model": info.get("model"),
+            "type": type_, "os": os_}
 
 
 class Monitor:
@@ -43,6 +49,7 @@ class Monitor:
         self.offline_after = max(offline_after, interval * 2)
         self._stop = threading.Event()
         self._name_due: Dict[str, float] = {}
+        self._dhcp_fresh: set = set()  # MAC vừa có gói DHCP mới, cần nhận diện lại ngay
         self.status = {
             "network": str(net.network),
             "local_ip": net.ip,
@@ -53,7 +60,17 @@ class Monitor:
             "scan_seconds": None,
             "scan_count": 0,
             "error": None,
+            "dhcp": False,
+            "dhcp_packets": 0,
         }
+
+    def on_dhcp(self, info: dict) -> None:
+        """Gọi từ luồng nghe DHCP cho mỗi gói client."""
+        self.db.record_dhcp(info, int(time.time()))
+        self._dhcp_fresh.add(info["mac"])
+        self.status["dhcp_packets"] += 1
+        log.info("%-12s %-15s %s %s", "DHCP " + info["type"], info["requested_ip"] or "?",
+                 info["mac"], " | ".join(filter(None, (info["hostname"], info["vendor_class"]))))
 
     def start(self) -> threading.Thread:
         thread = threading.Thread(target=self.run, name="afing-monitor", daemon=True)
@@ -96,16 +113,20 @@ class Monitor:
 
     def _resolve_names(self, seen: Dict[str, str]) -> None:
         mono = time.monotonic()
-        due = {ip: mac for ip, mac in seen.items() if self._name_due.get(mac, 0) <= mono}
+        fresh, self._dhcp_fresh = self._dhcp_fresh, set()
+        due = {ip: mac for ip, mac in seen.items()
+               if mac in fresh or self._name_due.get(mac, 0) <= mono}
+        self._dhcp_fresh |= fresh - set(due.values())  # thiết bị chưa hiện trong lượt quét này
         if not due:
             return
         found = identify(due.keys(), self.net.ip)
+        dhcp = self.db.dhcp_clients()
         # mDNS/SSDP hỏi cả mạng nên kết quả có thể gồm cả thiết bị chưa tới hạn dò.
         updates = {}
         for ip in set(due) | (set(found) & set(seen)):
-            updates[seen[ip]] = describe(found.get(ip, {}), self.oui.lookup(seen[ip]),
-                                         ip == self.net.gateway)
+            mac = seen[ip]
+            updates[mac] = describe(found.get(ip, {}), self.oui.lookup(mac),
+                                    ip == self.net.gateway, dhcp.get(mac))
         self.db.set_identities(updates)
         for ip, mac in due.items():
-            named = "name" in found.get(ip, {})
-            self._name_due[mac] = mono + (REFRESH_NAMED if named else RETRY_UNNAMED)
+            self._name_due[mac] = mono + (REFRESH_NAMED if updates[mac]["name"] else RETRY_UNNAMED)

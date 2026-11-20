@@ -18,6 +18,7 @@ Mở http://localhost:8080. Mặc định afing tự dò subnet của máy, qué
 |---|---|
 | `python -m afing` | Quét liên tục, ghi DB, mở web dashboard |
 | `python -m afing scan` | Quét một lần, in bảng ra màn hình |
+| `sudo python -m afing dhcp` | Chỉ nghe và in từng gói DHCP (để thử, xem mục "Nghe DHCP") |
 | `python -m afing update-oui` | Tải bảng hãng sản xuất (OUI) mới nhất từ IEEE |
 
 Tuỳ chọn thường dùng (xem đủ bằng `python -m afing --help`):
@@ -32,6 +33,7 @@ Tuỳ chọn thường dùng (xem đủ bằng `python -m afing --help`):
 | `--db afing.db` | afing.db | File SQLite |
 | `--method arp` | auto | Cách quét (xem dưới) |
 | `--no-web` | | Chỉ quét và ghi DB |
+| `--no-dhcp` | | Không nghe gói DHCP |
 
 Dashboard không có đăng nhập. Mặc định chỉ máy đang chạy afing mở được; với `--host 0.0.0.0`
 thì mọi máy trong LAN đều xem và đổi tên thiết bị được. Đừng mở cổng này ra Internet.
@@ -45,6 +47,33 @@ thì mọi máy trong LAN đều xem và đổi tên thiết bị được. Đ�
 
 `auto` (mặc định) dùng `arp` nếu đủ điều kiện, không thì dùng `passive`.
 
+## Nghe DHCP
+
+Khi kết nối vào mạng, thiết bị broadcast gói DHCP chứa tên máy của nó và các dấu hiệu nhận ra
+hệ điều hành. afing nghe các gói này (không bao giờ trả lời, nên không ảnh hưởng router) để:
+
+- lấy tên của những thiết bị không quảng bá gì, điển hình là iPhone, iPad, điện thoại Android;
+- nhận ra hệ điều hành: iOS/iPadOS, macOS, Windows, Android (kèm số phiên bản), Linux.
+
+Cần quyền mở cổng UDP 67:
+
+```bash
+sudo python3 -m afing
+```
+
+Trên Windows, chạy terminal bằng "Run as administrator" và cho phép khi tường lửa hỏi. Không đủ
+quyền thì afing vẫn chạy bình thường, chỉ bỏ phần này (dòng log "Không nghe DHCP").
+
+Giới hạn:
+
+- Chỉ bắt được gói lúc thiết bị **kết nối (lại)** vào mạng. Thiết bị đang nối sẵn sẽ chưa có
+  tên cho tới lần kết nối sau; muốn có ngay thì tắt rồi bật lại Wi-Fi trên thiết bị đó.
+- iPhone gửi tên đặt trong Cài đặt > Cài đặt chung > Giới thiệu > Tên. Máy chưa đổi tên thì
+  chỉ ra "iPhone".
+- Không lấy được đời máy (iPhone 13, 15...): gói DHCP không chứa thông tin đó.
+- iPhone/iPad/Apple Watch có vân tay DHCP giống nhau; afing coi là iPhone trừ khi tên máy hoặc
+  dịch vụ mDNS cho thấy khác.
+
 ## Thông tin thu được
 
 - **IP, MAC**: từ ARP.
@@ -52,7 +81,8 @@ thì mọi máy trong LAN đều xem và đổi tên thiết bị được. Đ�
   1. Dịch vụ mDNS/Bonjour mà thiết bị tự quảng bá (Chromecast, Apple TV, iPhone/Mac, Android TV,
      máy in, loa, HomeKit, ESPHome...) - cho tên thân thiện như "TV phòng khách" và model.
   2. UPnP/SSDP `friendlyName`, hãng và model (smart TV, router, console, NAS, loa).
-  3. Tên máy: reverse DNS (router), mDNS, NetBIOS (máy Windows).
+  3. Tên máy thiết bị tự khai trong gói DHCP (xem "Nghe DHCP").
+  4. Tên máy: reverse DNS (router), mDNS, NetBIOS (máy Windows).
 
   Thiết bị không trả lời nguồn nào (thường là điện thoại đang khoá màn hình, thiết bị IoT rẻ)
   thì không có tên; bấm vào tên trên dashboard để tự đặt. Thiết bị chưa có tên được dò lại

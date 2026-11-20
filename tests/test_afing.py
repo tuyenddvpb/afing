@@ -8,7 +8,10 @@ import unittest
 import urllib.error
 import urllib.request
 
-from afing import discovery, names, netinfo, scanner
+import socket
+import time
+
+from afing import dhcp, discovery, names, netinfo, scanner
 from afing.classify import TYPES, classify
 from afing.monitor import describe
 from afing.db import Database
@@ -286,13 +289,129 @@ class ClassifyTests(unittest.TestCase):
     def test_describe_and_extra_signals(self):
         self.assertEqual(
             describe({"name": "DESKTOP-AB12", "sources": {"nb"}}, "Dell Inc.", False),
-            {"name": "DESKTOP-AB12", "model": None, "type": "computer", "os": "Windows"})
+            {"name": "DESKTOP-AB12", "name_rank": 1, "model": None, "type": "computer",
+             "os": "Windows"})
         self.assertEqual(describe({}, "MAC ngẫu nhiên (riêng tư)", True)["type"], "router")
         self.assertEqual(discovery.parse_upnp_type(
             "<deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>"), "MediaRenderer")
         self.assertIsNone(discovery.parse_upnp_type("<root/>"))
         ptrs = [("_ipp._tcp.local", "X._ipp._tcp.local"), ("_weird._tcp.local", "Y._weird._tcp.local")]
         self.assertEqual(discovery.service_types(ptrs), ["_ipp._tcp"])
+
+
+def dhcp_packet(mac, msg_type=3, hostname=None, vendor_class=None, params=None,
+                requested_ip=None, op=1):
+    opts = bytes([53, 1, msg_type])
+    if requested_ip:
+        opts += bytes([50, 4]) + socket.inet_aton(requested_ip)
+    if hostname:
+        opts += bytes([0, 12, len(hostname)]) + hostname  # kèm 1 byte pad
+    if vendor_class:
+        opts += bytes([60, len(vendor_class)]) + vendor_class
+    if params:
+        opts += bytes([55, len(params)]) + bytes(params)
+    header = struct.pack("!4BIHH", op, 1, 6, 0, 0x1234, 0, 0x8000) + b"\0" * 16
+    chaddr = bytes.fromhex(mac.replace(":", "")) + b"\0" * 10
+    return header + chaddr + b"\0" * 192 + dhcp.MAGIC_COOKIE + opts + b"\xff"
+
+
+IOS_PARAMS = [1, 121, 3, 6, 15, 108, 114, 119, 162, 252]
+MACOS_PARAMS = IOS_PARAMS + [95, 44, 46]
+WINDOWS_PARAMS = [1, 3, 6, 15, 31, 33, 43, 44, 46, 47, 119, 121, 249, 252]
+
+
+class DhcpTests(unittest.TestCase):
+    def test_parse_iphone_request(self):
+        pkt = dhcp_packet("da:a1:19:00:00:01", hostname=b"iPhone-cua-Me", params=IOS_PARAMS,
+                          requested_ip="192.168.102.10")
+        self.assertEqual(dhcp.parse_packet(pkt), {
+            "mac": "da:a1:19:00:00:01", "type": "REQUEST", "hostname": "iPhone-cua-Me",
+            "vendor_class": None, "fingerprint": "1,121,3,6,15,108,114,119,162,252",
+            "requested_ip": "192.168.102.10"})
+
+    def test_rejects_non_client_and_broken_packets(self):
+        good = dhcp_packet("da:a1:19:00:00:01", hostname=b"x")
+        self.assertIsNone(dhcp.parse_packet(dhcp_packet("da:a1:19:00:00:01", op=2)))       # server
+        self.assertIsNone(dhcp.parse_packet(dhcp_packet("da:a1:19:00:00:01", msg_type=5)))  # ACK
+        self.assertIsNone(dhcp.parse_packet(dhcp_packet("ff:ff:ff:ff:ff:ff")))
+        self.assertIsNone(dhcp.parse_packet(good[:200]))
+        self.assertIsNone(dhcp.parse_packet(good[:236] + b"XXXX" + good[240:]))
+        self.assertIsNone(dhcp.parse_packet(b""))
+        # option khai dài hơn dữ liệu thật: bỏ option đó, không đọc tràn
+        cut = good[:240] + bytes([53, 1, 3, 12, 200]) + b"abc"
+        self.assertIsNone(dhcp.parse_packet(cut)["hostname"])
+        dirty = dhcp_packet("da:a1:19:00:00:01", hostname=b"<b>\x00\x07TV\xff", vendor_class=b"a\nb")
+        self.assertEqual(dhcp.parse_packet(dirty)["hostname"], "<b>TV")
+        self.assertEqual(dhcp.parse_packet(dirty)["vendor_class"], "ab")
+
+    def test_os_from_dhcp(self):
+        def guess(**kw):
+            return classify(vendor="MAC ngẫu nhiên (riêng tư)", dhcp=kw)
+
+        ios = ",".join(map(str, IOS_PARAMS))
+        self.assertEqual(guess(fingerprint=ios), ("mobile", "iOS"))
+        self.assertEqual(guess(fingerprint="1,121,3,6,15,119,252"), ("mobile", "iOS"))
+        self.assertEqual(guess(fingerprint=ios, hostname="iPad-cua-An"), ("tablet", "iPadOS"))
+        self.assertEqual(guess(fingerprint=ios, hostname="Apple-Watch"), ("wearable", None))
+        self.assertEqual(guess(fingerprint=",".join(map(str, MACOS_PARAMS))), ("computer", "macOS"))
+        self.assertEqual(guess(fingerprint=",".join(map(str, WINDOWS_PARAMS)),
+                               vendor_class="MSFT 5.0"), ("computer", "Windows"))
+        self.assertEqual(guess(vendor_class="android-dhcp-14"), ("mobile", "Android 14"))
+        self.assertEqual(guess(vendor_class="udhcp 1.31.1"), (None, "Linux"))
+        self.assertEqual(guess(fingerprint="1,3,6"), (None, None))
+        # dịch vụ thiết bị tự quảng bá vẫn thắng vân tay DHCP
+        self.assertEqual(classify(name="Apple TV", services=["_airplay._tcp"],
+                                  dhcp={"fingerprint": ios}), ("tv", "tvOS"))
+
+    def test_describe_name_priority(self):
+        d = {"hostname": "iPhone-cua-Me", "fingerprint": ",".join(map(str, IOS_PARAMS))}
+        self.assertEqual(describe({}, None, False, d), {
+            "name": "iPhone-cua-Me", "name_rank": 2, "model": None, "type": "mobile", "os": "iOS"})
+        self.assertEqual(describe({"name": "192-168-1-5.lan", "name_rank": 1}, None, False, d)["name"],
+                         "iPhone-cua-Me")
+        best = describe({"name": "iPhone của Mẹ", "name_rank": 3}, None, False, d)
+        self.assertEqual((best["name"], best["name_rank"], best["os"]), ("iPhone của Mẹ", 3, "iOS"))
+
+    def test_listener_end_to_end_into_monitor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(os.path.join(tmp, "t.db"))
+            net = netinfo.NetInfo(ipaddress.ip_network("127.0.0.0/30"), "127.0.0.1")
+            fake = FakeScanner()
+            monitor = Monitor(net, fake, db, OuiTable(os.path.join(tmp, "oui.csv")))
+            mac = "da:a1:19:00:00:01"
+            listener = dhcp.DhcpListener(monitor.on_dhcp, host="127.0.0.1", port=0).start()
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.sendto(b"garbage", ("127.0.0.1", listener.port))
+                s.sendto(dhcp_packet(mac, hostname=b"iPhone-cua-Me", params=IOS_PARAMS),
+                         ("127.0.0.1", listener.port))
+                s.close()
+                for _ in range(100):
+                    if monitor.status["dhcp_packets"]:
+                        break
+                    time.sleep(0.02)
+            finally:
+                listener.stop()
+            self.assertEqual(monitor.status["dhcp_packets"], 1)
+
+            import afing.monitor as mon
+            original, mon.identify = mon.identify, lambda ips, local_ip: {}
+            try:
+                monitor.scan_once()                 # iPhone chưa hiện trong lượt quét
+                self.assertEqual(monitor._dhcp_fresh, {mac})
+                fake.result = {"127.0.0.2": mac}
+                monitor.scan_once()                 # thiết bị mới -> nhận diện bằng DHCP
+                monitor._name_due[mac] = time.monotonic() + 999
+                # gói DHCP sau thiếu hostname: giữ tên cũ, vẫn kích hoạt nhận diện lại
+                monitor.on_dhcp(dhcp.parse_packet(dhcp_packet(mac, params=IOS_PARAMS)))
+                monitor.scan_once()
+            finally:
+                mon.identify = original
+            dev = db.devices()[0]
+            self.assertEqual((dev["hostname"], dev["name_rank"], dev["device_type"], dev["os"]),
+                             ("iPhone-cua-Me", 2, "mobile", "iOS"))
+            self.assertEqual(monitor._dhcp_fresh, set())
+            db.close()
 
 
 class OuiTests(unittest.TestCase):
@@ -355,6 +474,17 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual((dev["vendor"], dev["hostname"], dev["custom_name"], dev["model"]),
                          ("Acme", "printer", "Máy in tầng 2", "LaserJet Pro"))
         self.assertEqual(self.db.events()[0]["name"], "Máy in tầng 2")
+
+    def test_better_name_is_not_overwritten_by_worse(self):
+        a = "aa:aa:aa:aa:aa:aa"
+        self.db.apply_scan({"10.0.0.1": a}, 1000, 45)
+        self.db.set_identities({a: {"name": "host.lan", "name_rank": 1}})
+        self.db.set_identities({a: {"name": "iPhone-cua-Me", "name_rank": 2}})
+        self.db.set_identities({a: {"name": "host.lan", "name_rank": 1}})
+        self.assertEqual(self.db.devices()[0]["hostname"], "iPhone-cua-Me")
+        self.db.set_identities({a: {"name": "iPhone của Mẹ", "name_rank": 3}})
+        self.db.set_identities({a: {"name": "iPhone-moi", "name_rank": 2}})
+        self.assertEqual(self.db.devices()[0]["hostname"], "iPhone của Mẹ")
 
     def test_same_mac_two_ips(self):
         a = "aa:aa:aa:aa:aa:aa"
