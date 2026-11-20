@@ -94,7 +94,7 @@
   <div class="grid">
     <section class="card">
       <div class="toolbar">
-        <input id="search" type="search" placeholder="Tìm theo tên, IP, MAC, hãng…" aria-label="Tìm thiết bị">
+        <input id="search" type="search" placeholder="Tìm theo tên, IP, MAC, hãng, model…" aria-label="Tìm thiết bị">
         <div class="seg" id="filter">
           <button data-f="all" class="active">Tất cả</button>
           <button data-f="online">Trực tuyến</button>
@@ -107,7 +107,7 @@
             <th data-k="name">Thiết bị</th>
             <th data-k="ip" class="sorted">IP</th>
             <th data-k="mac">MAC</th>
-            <th data-k="vendor">Hãng sản xuất</th>
+            <th data-k="vendor">Hãng / model</th>
             <th data-k="first_seen">Thấy lần đầu</th>
             <th data-k="last_seen">Thấy gần nhất</th>
           </tr></thead>
@@ -183,7 +183,7 @@ function render() {
   const q = $("search").value.trim().toLowerCase();
   const shown = devices
     .filter((d) => filter === "all" || (filter === "online") === !!d.is_online)
-    .filter((d) => !q || [displayName(d), d.hostname, d.ip, d.mac, d.vendor]
+    .filter((d) => !q || [displayName(d), d.hostname, d.ip, d.mac, d.vendor, d.model]
       .some((v) => v && v.toLowerCase().includes(q)))
     .sort((a, b) => {
       const x = sortValue(a), y = sortValue(b);
@@ -204,8 +204,9 @@ function render() {
     const first = el("td", null, ago(d.first_seen, now)); first.title = fullTime(d.first_seen);
     const last = el("td", null, d.is_online ? "đang trực tuyến" : ago(d.last_seen, now));
     last.title = fullTime(d.last_seen);
-    tr.append(nameTd, el("td", "mono", d.ip), el("td", "mono", d.mac),
-              el("td", null, d.vendor || "—"), first, last);
+    const vendorTd = el("td", null, d.vendor || (d.model ? "" : "—"));
+    if (d.model) vendorTd.append(el("span", d.vendor ? "sub" : null, d.model));
+    tr.append(nameTd, el("td", "mono", d.ip), el("td", "mono", d.mac), vendorTd, first, last);
     return tr;
   }));
   $("empty").hidden = shown.length > 0;

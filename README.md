@@ -48,8 +48,15 @@ thì mọi máy trong LAN đều xem và đổi tên thiết bị được. Đ�
 ## Thông tin thu được
 
 - **IP, MAC**: từ ARP.
-- **Tên**: reverse DNS (router), mDNS/Bonjour, NetBIOS. Thiết bị không trả lời nguồn nào thì
-  không có tên; bấm vào tên trên dashboard để tự đặt.
+- **Tên và model**, theo thứ tự ưu tiên:
+  1. Dịch vụ mDNS/Bonjour mà thiết bị tự quảng bá (Chromecast, Apple TV, iPhone/Mac, Android TV,
+     máy in, loa, HomeKit, ESPHome...) - cho tên thân thiện như "TV phòng khách" và model.
+  2. UPnP/SSDP `friendlyName`, hãng và model (smart TV, router, console, NAS, loa).
+  3. Tên máy: reverse DNS (router), mDNS, NetBIOS (máy Windows).
+
+  Thiết bị không trả lời nguồn nào (thường là điện thoại đang khoá màn hình, thiết bị IoT rẻ)
+  thì không có tên; bấm vào tên trên dashboard để tự đặt. Thiết bị chưa có tên được dò lại
+  mỗi 5 phút.
 - **Hãng sản xuất**: tra 3 byte đầu của MAC trong bảng OUI của IEEE. Lần chạy đầu afing tự tải
   bảng này về `oui.csv` cạnh file DB (tắt bằng `--no-oui-download`). Điện thoại/laptop đời mới
   dùng MAC ngẫu nhiên cho từng Wi-Fi nên không tra được hãng.

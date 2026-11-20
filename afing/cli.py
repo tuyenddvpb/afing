@@ -9,7 +9,7 @@ import threading
 from . import __version__
 from .db import Database
 from .monitor import Monitor
-from .names import resolve_names
+from .discovery import identify
 from .netinfo import detect
 from .oui import OuiTable
 from .scanner import Scanner
@@ -63,10 +63,13 @@ def main(argv=None) -> int:
 
     if args.command == "scan":
         seen = scanner.scan()
-        names = resolve_names(seen.keys(), net.ip)
-        print(f"{'IP':<16}{'MAC':<19}{'TÊN':<28}HÃNG")
+        print(f"Tìm thấy {len(seen)} thiết bị, đang dò tên (khoảng 5 giây)...")
+        found = identify(seen.keys(), net.ip)
+        print(f"{'IP':<16}{'MAC':<19}{'TÊN':<28}{'MODEL':<26}HÃNG")
         for ip in sorted(seen, key=ipaddress.ip_address):
-            print(f"{ip:<16}{seen[ip]:<19}{names.get(ip, '-'):<28}{oui.lookup(seen[ip]) or '-'}")
+            info = found.get(ip, {})
+            print(f"{ip:<16}{seen[ip]:<19}{info.get('name', '-'):<28}{info.get('model', '-'):<26}"
+                  f"{oui.lookup(seen[ip]) or '-'}")
         print(f"\n{len(seen)} thiết bị")
         return 0
 

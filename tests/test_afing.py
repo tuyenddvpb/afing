@@ -8,7 +8,7 @@ import unittest
 import urllib.error
 import urllib.request
 
-from afing import names, netinfo, scanner
+from afing import discovery, names, netinfo, scanner
 from afing.db import Database
 from afing.monitor import Monitor
 from afing.oui import RANDOM_MAC, OuiTable
@@ -132,6 +132,111 @@ class NameTests(unittest.TestCase):
         self.assertIsNone(names.parse_nbstat(b"\x00" * 20))
 
 
+def dns_name(name):
+    return b"".join(bytes([len(p)]) + p for p in name) + b"\0"
+
+
+def dns_record(name, rtype, rdata):
+    return dns_name(name) + struct.pack("!HHIH", rtype, 1, 120, len(rdata)) + rdata
+
+
+def txt_rdata(*items):
+    return b"".join(bytes([len(i)]) + i for i in items)
+
+
+class DiscoveryTests(unittest.TestCase):
+    def packet(self, *records):
+        return struct.pack("!6H", 0, 0x8400, 0, len(records), 0, 0) + b"".join(records)
+
+    def test_browse_query_is_parseable(self):
+        q = discovery.build_browse_query(s[0] for s in discovery.SERVICES)
+        self.assertEqual(struct.unpack("!6H", q[:12])[2], len(discovery.SERVICES))
+        self.assertEqual(discovery.parse_mdns_packet(q), ([], {}))
+
+    def test_chromecast(self):
+        svc = [b"_googlecast", b"_tcp", b"local"]
+        inst = [b"Chromecast-Ultra-8f3a"] + svc
+        pkt = self.packet(
+            dns_record(svc, 12, dns_name(inst)),
+            dns_record(inst, 16, txt_rdata(b"id=8f3a", b"md=Chromecast Ultra", "fn=TV phòng khách".encode())),
+        )
+        ptrs, txts = discovery.parse_mdns_packet(pkt)
+        self.assertEqual(discovery.summarize_services(ptrs, txts),
+                         {"name": "TV phòng khách", "model": "Chromecast Ultra"})
+
+    def test_apple_and_priority(self):
+        raop = [b"_raop", b"_tcp", b"local"]
+        link = [b"_companion-link", b"_tcp", b"local"]
+        # tên instance có dấu chấm và ký tự ngoài ASCII
+        mac_name = "MacBook của T. Anh".encode()
+        pkt = self.packet(
+            dns_record(raop, 12, dns_name([b"AABBCCDDEEFF@Loa bep"] + raop)),
+            dns_record(link, 12, dns_name([mac_name] + link)),
+            dns_record([mac_name, b"_device-info", b"_tcp", b"local"], 16, txt_rdata(b"model=MacBookPro18,3")),
+        )
+        ptrs, txts = discovery.parse_mdns_packet(pkt)
+        self.assertEqual(discovery.summarize_services(ptrs, txts),
+                         {"name": "MacBook của T. Anh", "model": "MacBookPro18,3"})
+        self.assertEqual(discovery.summarize_services(ptrs[:1], {}), {"name": "Loa bep"})
+
+    def test_unknown_service_and_garbage(self):
+        svc = [b"_weird", b"_tcp", b"local"]
+        ptrs, txts = discovery.parse_mdns_packet(self.packet(dns_record(svc, 12, dns_name([b"x"] + svc))))
+        self.assertEqual(discovery.summarize_services(ptrs, txts), {})
+        self.assertEqual(discovery.parse_mdns_packet(b"\xff" * 30), ([], {}))
+        self.assertEqual(discovery.parse_txt(b"\x05ab=cd\x03key\x00\x09AB=second"), {"ab": "cd"})
+
+    def test_ssdp_parsing(self):
+        resp = (b"HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nST: upnp:rootdevice\r\n"
+                b"Location: http://192.168.1.20:8060/dial/dd.xml\r\n\r\n")
+        h = discovery.parse_ssdp_headers(resp)
+        self.assertEqual(h["location"], "http://192.168.1.20:8060/dial/dd.xml")
+        self.assertEqual(h["st"], "upnp:rootdevice")
+        self.assertTrue(discovery.safe_location(h["location"], "192.168.1.20"))
+        self.assertFalse(discovery.safe_location(h["location"], "192.168.1.21"))
+        self.assertFalse(discovery.safe_location("https://192.168.1.20/x", "192.168.1.20"))
+        self.assertFalse(discovery.safe_location("file:///etc/passwd", "192.168.1.20"))
+        self.assertFalse(discovery.safe_location("http://[bad", "192.168.1.20"))
+
+    def test_device_xml(self):
+        xml = """<?xml version="1.0"?><root><device>
+            <friendlyName>[TV] Samsung Q60 &amp; Soundbar</friendlyName>
+            <manufacturer>Samsung Electronics</manufacturer>
+            <modelName>QA55Q60</modelName>
+            <deviceList><device><friendlyName>inner</friendlyName></device></deviceList>
+        </device></root>"""
+        self.assertEqual(discovery.parse_device_xml(xml), {
+            "name": "[TV] Samsung Q60 & Soundbar", "model": "Samsung Electronics QA55Q60"})
+        self.assertEqual(
+            discovery.parse_device_xml("<manufacturer>Sonos</manufacturer><modelName>Sonos One</modelName>"),
+            {"model": "Sonos One"})
+        self.assertEqual(discovery.parse_device_xml("not xml"), {})
+
+    def test_fetch_description_from_real_http_server(self):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                body = b"<root><friendlyName>NAS nha</friendlyName><modelName>DS220</modelName></root>"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            url = f"http://127.0.0.1:{srv.server_address[1]}/desc.xml"
+            self.assertEqual(discovery._fetch_description(url), {"name": "NAS nha", "model": "DS220"})
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        self.assertEqual(discovery._fetch_description("http://127.0.0.1:1/x"), {})
+
+
 class OuiTests(unittest.TestCase):
     def test_lookup(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -181,12 +286,13 @@ class DatabaseTests(unittest.TestCase):
         a = "aa:aa:aa:aa:aa:aa"
         self.db.apply_scan({"10.0.0.1": a}, 1000, 45)
         self.db.apply_scan({"10.0.0.1": a}, 1010, 45, vendor_lookup=lambda mac: "Acme")
-        self.db.set_hostnames({a: "printer"})
+        self.db.set_identities({a: {"name": "printer", "model": "LaserJet"}})
+        self.db.set_identities({a: {"model": "LaserJet Pro"}})  # thiếu tên -> giữ tên cũ
         self.assertTrue(self.db.set_custom_name(a, "Máy in tầng 2"))
         self.assertFalse(self.db.set_custom_name("00:00:00:00:00:01", "x"))
         dev = self.db.devices()[0]
-        self.assertEqual((dev["vendor"], dev["hostname"], dev["custom_name"]),
-                         ("Acme", "printer", "Máy in tầng 2"))
+        self.assertEqual((dev["vendor"], dev["hostname"], dev["custom_name"], dev["model"]),
+                         ("Acme", "printer", "Máy in tầng 2", "LaserJet Pro"))
         self.assertEqual(self.db.events()[0]["name"], "Máy in tầng 2")
 
     def test_same_mac_two_ips(self):

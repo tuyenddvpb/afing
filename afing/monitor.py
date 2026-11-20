@@ -6,7 +6,7 @@ import time
 from typing import Dict, Optional
 
 from .db import Database
-from .names import resolve_names
+from .discovery import identify
 from .netinfo import NetInfo
 from .oui import OuiTable
 from .scanner import Scanner
@@ -88,7 +88,9 @@ class Monitor:
         due = {ip: mac for ip, mac in seen.items() if self._name_due.get(mac, 0) <= mono}
         if not due:
             return
-        names = resolve_names(due.keys(), self.net.ip)
-        self.db.set_hostnames({due[ip]: name for ip, name in names.items()})
+        found = identify(due.keys(), self.net.ip)
+        # mDNS/SSDP hỏi cả mạng nên kết quả có thể gồm cả thiết bị chưa tới hạn dò.
+        self.db.set_identities({seen[ip]: info for ip, info in found.items() if ip in seen})
         for ip, mac in due.items():
-            self._name_due[mac] = mono + (REFRESH_NAMED if ip in names else RETRY_UNNAMED)
+            named = "name" in found.get(ip, {})
+            self._name_due[mac] = mono + (REFRESH_NAMED if named else RETRY_UNNAMED)

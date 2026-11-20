@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS devices (
     hostname    TEXT,             -- tên tự dò được (DNS/mDNS/NetBIOS)
     custom_name TEXT,             -- tên do người dùng đặt trên web
     vendor      TEXT,
+    model       TEXT,             -- model thiết bị tự khai (mDNS/UPnP)
     is_online   INTEGER NOT NULL DEFAULT 1,
     is_self     INTEGER NOT NULL DEFAULT 0,
     is_gateway  INTEGER NOT NULL DEFAULT 0,
@@ -37,6 +38,9 @@ class Database:
         with self._lock, self._conn:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(SCHEMA)
+            columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(devices)")}
+            if "model" not in columns:  # DB tạo từ bản cũ
+                self._conn.execute("ALTER TABLE devices ADD COLUMN model TEXT")
 
     def close(self) -> None:
         with self._lock:
@@ -95,11 +99,13 @@ class Database:
             )
         return events
 
-    def set_hostnames(self, names_by_mac: Dict[str, str]) -> None:
+    def set_identities(self, info_by_mac: Dict[str, dict]) -> None:
+        """Ghi tên/model vừa dò được ({mac: {"name":..., "model":...}}); thiếu khoá thì giữ giá trị cũ."""
         with self._lock, self._conn:
             self._conn.executemany(
-                "UPDATE devices SET hostname=? WHERE mac=?",
-                [(name, mac) for mac, name in names_by_mac.items()],
+                "UPDATE devices SET hostname=COALESCE(?, hostname), model=COALESCE(?, model)"
+                " WHERE mac=?",
+                [(i.get("name"), i.get("model"), mac) for mac, i in info_by_mac.items()],
             )
 
     def set_custom_name(self, mac: str, name: Optional[str]) -> bool:
