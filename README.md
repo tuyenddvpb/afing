@@ -68,8 +68,13 @@ Giới hạn:
 
 - Chỉ bắt được gói lúc thiết bị **kết nối (lại)** vào mạng. Thiết bị đang nối sẵn sẽ chưa có
   tên cho tới lần kết nối sau; muốn có ngay thì tắt rồi bật lại Wi-Fi trên thiết bị đó.
-- iPhone gửi tên đặt trong Cài đặt > Cài đặt chung > Giới thiệu > Tên. Máy chưa đổi tên thì
-  chỉ ra "iPhone".
+- iPhone đang bật "Địa chỉ Wi-Fi bảo mật" (mặc định) **không gửi tên** trong gói DHCP: afing vẫn
+  nhận ra là iPhone nhờ vân tay nhưng không có tên riêng. Tắt tuỳ chọn này cho mạng nhà
+  (Cài đặt > Wi-Fi > ⓘ cạnh tên mạng) thì iPhone gửi tên đặt trong Cài đặt > Cài đặt chung >
+  Giới thiệu > Tên và dùng MAC thật, cố định. Đã kiểm chứng trên một iPhone thật; các bản iOS
+  khác có thể khác.
+- Khi đổi tuỳ chọn trên, iPhone xuất hiện với MAC mới nên afing coi là thiết bị mới; dòng ứng
+  với MAC ngẫu nhiên cũ sẽ nằm lại ở trạng thái ngoại tuyến.
 - Không lấy được đời máy (iPhone 13, 15...): gói DHCP không chứa thông tin đó.
 - iPhone/iPad/Apple Watch có vân tay DHCP giống nhau; afing coi là iPhone trừ khi tên máy hoặc
   dịch vụ mDNS cho thấy khác.
