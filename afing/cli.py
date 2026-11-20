@@ -8,7 +8,8 @@ import threading
 
 from . import __version__
 from .db import Database
-from .monitor import Monitor
+from .classify import TYPES
+from .monitor import Monitor, describe
 from .discovery import identify
 from .netinfo import detect
 from .oui import OuiTable
@@ -65,11 +66,12 @@ def main(argv=None) -> int:
         seen = scanner.scan()
         print(f"Tìm thấy {len(seen)} thiết bị, đang dò tên (khoảng 5 giây)...")
         found = identify(seen.keys(), net.ip)
-        print(f"{'IP':<16}{'MAC':<19}{'TÊN':<28}{'MODEL':<26}HÃNG")
+        print(f"{'IP':<16}{'MAC':<19}{'LOẠI':<16}{'TÊN':<28}{'MODEL':<26}{'HĐH':<12}HÃNG")
         for ip in sorted(seen, key=ipaddress.ip_address):
-            info = found.get(ip, {})
-            print(f"{ip:<16}{seen[ip]:<19}{info.get('name', '-'):<28}{info.get('model', '-'):<26}"
-                  f"{oui.lookup(seen[ip]) or '-'}")
+            vendor = oui.lookup(seen[ip])
+            d = describe(found.get(ip, {}), vendor, ip == net.gateway)
+            print(f"{ip:<16}{seen[ip]:<19}{TYPES.get(d['type'], '-'):<16}{d['name'] or '-':<28}"
+                  f"{d['model'] or '-':<26}{d['os'] or '-':<12}{vendor or '-'}")
         print(f"\n{len(seen)} thiết bị")
         return 0
 

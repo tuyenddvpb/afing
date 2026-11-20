@@ -5,6 +5,7 @@ import threading
 import time
 from typing import Dict, Optional
 
+from .classify import classify
 from .db import Database
 from .discovery import identify
 from .netinfo import NetInfo
@@ -22,6 +23,16 @@ EVENT_LABELS = {
     "offline": "Rời mạng",
     "ip_change": "Đổi IP",
 }
+
+
+def describe(info: dict, vendor: Optional[str], is_gateway: bool) -> dict:
+    """Gộp kết quả dò của một thiết bị với loại + hệ điều hành suy đoán."""
+    type_, os_ = classify(
+        vendor=vendor, name=info.get("name"), model=info.get("model"),
+        services=info.get("services") or (), upnp_type=info.get("upnp_type"),
+        sources=info.get("sources") or (), is_gateway=is_gateway,
+    )
+    return {"name": info.get("name"), "model": info.get("model"), "type": type_, "os": os_}
 
 
 class Monitor:
@@ -90,7 +101,11 @@ class Monitor:
             return
         found = identify(due.keys(), self.net.ip)
         # mDNS/SSDP hỏi cả mạng nên kết quả có thể gồm cả thiết bị chưa tới hạn dò.
-        self.db.set_identities({seen[ip]: info for ip, info in found.items() if ip in seen})
+        updates = {}
+        for ip in set(due) | (set(found) & set(seen)):
+            updates[seen[ip]] = describe(found.get(ip, {}), self.oui.lookup(seen[ip]),
+                                         ip == self.net.gateway)
+        self.db.set_identities(updates)
         for ip, mac in due.items():
             named = "name" in found.get(ip, {})
             self._name_due[mac] = mono + (REFRESH_NAMED if named else RETRY_UNNAMED)

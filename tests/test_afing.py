@@ -9,6 +9,8 @@ import urllib.error
 import urllib.request
 
 from afing import discovery, names, netinfo, scanner
+from afing.classify import TYPES, classify
+from afing.monitor import describe
 from afing.db import Database
 from afing.monitor import Monitor
 from afing.oui import RANDOM_MAC, OuiTable
@@ -237,6 +239,62 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(discovery._fetch_description("http://127.0.0.1:1/x"), {})
 
 
+class ClassifyTests(unittest.TestCase):
+    def test_devices_from_a_real_home_network(self):
+        cases = [
+            # (kwargs, loại, hệ điều hành)
+            (dict(vendor="Samsung Electronics Co.,Ltd", name="WashingMachine"), "appliance", None),
+            (dict(vendor="Xiaomi Communications Co Ltd", name="Deebot"), "vacuum", None),
+            (dict(vendor="Samsung Electronics Co.,Ltd", name="[TV] Samsung 6 Series (43)",
+                  model="Samsung Electronics UN43TU6900", upnp_type="MediaRenderer"), "tv", "Tizen"),
+            (dict(vendor="Brother Industries, LTD.", name="BRW3CEFA5735548",
+                  model="Brother DCP-T530DW", services=["_ipp._tcp"], sources={"nb"}), "printer", None),
+            (dict(vendor="Dell Inc.", name="DESKTOP-P1CKL66", sources={"nb"}), "computer", "Windows"),
+            (dict(vendor="Intel Corporate", name="DESKTOP-O6P5QG4"), "computer", "Windows"),
+            (dict(vendor=None, name="MD5-PC", sources={"nb"}), "computer", "Windows"),
+            (dict(vendor="zte corporation", is_gateway=True), "router", None),
+            (dict(vendor="MAC ngẫu nhiên (riêng tư)"), None, None),
+            (dict(vendor="Apple, Inc.", name="Mẹ", model="iPhone8,1"), "mobile", "iOS"),
+        ]
+        for kwargs, type_, os_ in cases:
+            with self.subTest(kwargs=kwargs):
+                self.assertEqual(classify(**kwargs), (type_, os_))
+
+    def test_other_signals(self):
+        self.assertEqual(classify(name="Phòng khách", model="Chromecast Ultra",
+                                  services=["_googlecast._tcp"]), ("media", None))
+        self.assertEqual(classify(name="Bếp", model="Google Nest Mini",
+                                  services=["_googlecast._tcp"]), ("speaker", None))
+        self.assertEqual(classify(name="MacBook của An", model="MacBookPro18,3",
+                                  services=["_companion-link._tcp", "_smb._tcp"]), ("computer", "macOS"))
+        self.assertEqual(classify(name="Apple TV", model="AppleTV6,2",
+                                  services=["_airplay._tcp"]), ("tv", "tvOS"))
+        self.assertEqual(classify(name="raspberrypi", services=["_workstation._tcp"]),
+                         ("computer", "Linux"))
+        self.assertEqual(classify(vendor="Espressif Inc."), ("iot", None))
+        self.assertEqual(classify(vendor="TP-Link Corporation Limited"), ("network", None))
+        self.assertEqual(classify(vendor="Samsung Electronics Co.,Ltd"), (None, None))
+        self.assertEqual(classify(name="Galaxy-S21", vendor="MAC ngẫu nhiên (riêng tư)"),
+                         ("mobile", "Android"))
+        self.assertEqual(classify(upnp_type="InternetGatewayDevice"), ("router", None))
+
+    def test_every_rule_uses_a_known_type(self):
+        from afing import classify as mod
+        for _, type_, _ in mod.TEXT_RULES + mod.VENDOR_RULES:
+            self.assertIn(type_, TYPES)
+
+    def test_describe_and_extra_signals(self):
+        self.assertEqual(
+            describe({"name": "DESKTOP-AB12", "sources": {"nb"}}, "Dell Inc.", False),
+            {"name": "DESKTOP-AB12", "model": None, "type": "computer", "os": "Windows"})
+        self.assertEqual(describe({}, "MAC ngẫu nhiên (riêng tư)", True)["type"], "router")
+        self.assertEqual(discovery.parse_upnp_type(
+            "<deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>"), "MediaRenderer")
+        self.assertIsNone(discovery.parse_upnp_type("<root/>"))
+        ptrs = [("_ipp._tcp.local", "X._ipp._tcp.local"), ("_weird._tcp.local", "Y._weird._tcp.local")]
+        self.assertEqual(discovery.service_types(ptrs), ["_ipp._tcp"])
+
+
 class OuiTests(unittest.TestCase):
     def test_lookup(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -287,7 +345,10 @@ class DatabaseTests(unittest.TestCase):
         self.db.apply_scan({"10.0.0.1": a}, 1000, 45)
         self.db.apply_scan({"10.0.0.1": a}, 1010, 45, vendor_lookup=lambda mac: "Acme")
         self.db.set_identities({a: {"name": "printer", "model": "LaserJet"}})
-        self.db.set_identities({a: {"model": "LaserJet Pro"}})  # thiếu tên -> giữ tên cũ
+        self.db.set_identities({a: {"model": "LaserJet Pro", "type": "printer"}})  # thiếu tên -> giữ tên cũ
+        self.db.set_identities({a: {"os": "Linux"}})
+        self.assertEqual((self.db.devices()[0]["device_type"], self.db.devices()[0]["os"]),
+                         ("printer", "Linux"))
         self.assertTrue(self.db.set_custom_name(a, "Máy in tầng 2"))
         self.assertFalse(self.db.set_custom_name("00:00:00:00:00:01", "x"))
         dev = self.db.devices()[0]

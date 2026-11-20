@@ -57,6 +57,9 @@ thì mọi máy trong LAN đều xem và đổi tên thiết bị được. Đ�
   Thiết bị không trả lời nguồn nào (thường là điện thoại đang khoá màn hình, thiết bị IoT rẻ)
   thì không có tên; bấm vào tên trên dashboard để tự đặt. Thiết bị chưa có tên được dò lại
   mỗi 5 phút.
+- **Loại thiết bị và hệ điều hành**: suy đoán theo luật trong `afing/classify.py` từ dịch vụ
+  thiết bị quảng bá, loại UPnP, chữ trong tên/model, hãng sản xuất. Đây là phỏng đoán có căn cứ,
+  không phải sự thật; không đủ dấu hiệu thì để trống chứ không đoán bừa.
 - **Hãng sản xuất**: tra 3 byte đầu của MAC trong bảng OUI của IEEE. Lần chạy đầu afing tự tải
   bảng này về `oui.csv` cạnh file DB (tắt bằng `--no-oui-download`). Điện thoại/laptop đời mới
   dùng MAC ngẫu nhiên cho từng Wi-Fi nên không tra được hãng.

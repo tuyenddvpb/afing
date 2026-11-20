@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS devices (
     custom_name TEXT,             -- tên do người dùng đặt trên web
     vendor      TEXT,
     model       TEXT,             -- model thiết bị tự khai (mDNS/UPnP)
+    device_type TEXT,             -- mã loại suy đoán (xem classify.TYPES)
+    os          TEXT,             -- hệ điều hành suy đoán
     is_online   INTEGER NOT NULL DEFAULT 1,
     is_self     INTEGER NOT NULL DEFAULT 0,
     is_gateway  INTEGER NOT NULL DEFAULT 0,
@@ -39,8 +41,9 @@ class Database:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(SCHEMA)
             columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(devices)")}
-            if "model" not in columns:  # DB tạo từ bản cũ
-                self._conn.execute("ALTER TABLE devices ADD COLUMN model TEXT")
+            for column in ("model", "device_type", "os"):  # DB tạo từ bản cũ
+                if column not in columns:
+                    self._conn.execute(f"ALTER TABLE devices ADD COLUMN {column} TEXT")
 
     def close(self) -> None:
         with self._lock:
@@ -100,12 +103,13 @@ class Database:
         return events
 
     def set_identities(self, info_by_mac: Dict[str, dict]) -> None:
-        """Ghi tên/model vừa dò được ({mac: {"name":..., "model":...}}); thiếu khoá thì giữ giá trị cũ."""
+        """Ghi {mac: {"name", "model", "type", "os"}} vừa dò được; thiếu khoá thì giữ giá trị cũ."""
         with self._lock, self._conn:
             self._conn.executemany(
-                "UPDATE devices SET hostname=COALESCE(?, hostname), model=COALESCE(?, model)"
-                " WHERE mac=?",
-                [(i.get("name"), i.get("model"), mac) for mac, i in info_by_mac.items()],
+                "UPDATE devices SET hostname=COALESCE(?, hostname), model=COALESCE(?, model),"
+                " device_type=COALESCE(?, device_type), os=COALESCE(?, os) WHERE mac=?",
+                [(i.get("name"), i.get("model"), i.get("type"), i.get("os"), mac)
+                 for mac, i in info_by_mac.items()],
             )
 
     def set_custom_name(self, mac: str, name: Optional[str]) -> bool:

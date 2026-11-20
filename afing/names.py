@@ -186,8 +186,12 @@ def rdns_lookup(ips: Iterable[str], wait: float = 3.0) -> Dict[str, str]:
     return found
 
 
-def resolve_names(ips: Iterable[str], local_ip: str) -> Dict[str, str]:
-    """Chạy song song cả 3 nguồn; ưu tiên rDNS > mDNS > NetBIOS."""
+def resolve_names(ips: Iterable[str], local_ip: str,
+                  sources: Optional[Dict[str, set]] = None) -> Dict[str, str]:
+    """Chạy song song cả 3 nguồn; ưu tiên rDNS > mDNS > NetBIOS.
+
+    Nếu truyền `sources`, nó được điền {ip: {"rdns", "mdns", "nb"}} - nguồn nào đã trả lời.
+    """
     ips = list(ips)
     if not ips:
         return {}
@@ -214,6 +218,7 @@ def resolve_names(ips: Iterable[str], local_ip: str) -> Dict[str, str]:
         for key in ("rdns", "mdns", "nb"):
             name = clean_name(results.get(key, {}).get(ip))
             if name:
-                names[ip] = name
-                break
+                names.setdefault(ip, name)
+                if sources is not None:
+                    sources.setdefault(ip, set()).add(key)
     return names

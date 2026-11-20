@@ -128,6 +128,12 @@ def summarize_services(ptrs: List[Tuple[str, str]], txts: Dict[str, Dict[str, st
     return {k: v for k, v in (("name", name), ("model", model)) if v}
 
 
+def service_types(ptrs: List[Tuple[str, str]]) -> List[str]:
+    """Các loại dịch vụ đã biết mà thiết bị quảng bá, bỏ đuôi ".local" (vd "_ipp._tcp")."""
+    known = {s[0] for s in SERVICES}
+    return sorted({svc.lower()[: -len(".local")] for svc, _ in ptrs if svc.lower() in known})
+
+
 def mdns_services(local_ip: str, wait: float = 3.0) -> Dict[str, Dict[str, str]]:
     """Hỏi cả mạng về các dịch vụ phổ biến. Trả {ip: {"name":..., "model":...}}."""
     per_ip: Dict[str, Tuple[list, dict]] = {}
@@ -158,7 +164,10 @@ def mdns_services(local_ip: str, wait: float = 3.0) -> Dict[str, Dict[str, str]]
         s.close()
     found = {}
     for ip, (ptrs, txts) in per_ip.items():
-        info = summarize_services(ptrs, txts)
+        info: dict = summarize_services(ptrs, txts)
+        services = service_types(ptrs)
+        if services:
+            info["services"] = services
         if info:
             found[ip] = info
     return found
@@ -216,7 +225,17 @@ def _fetch_description(location: str) -> Dict[str, str]:
             text = resp.read(MAX_XML_BYTES).decode("utf-8", "replace")
     except (OSError, ValueError):
         return {}
-    return parse_device_xml(text)
+    info: dict = parse_device_xml(text)
+    upnp_type = parse_upnp_type(text)
+    if upnp_type:
+        info["upnp_type"] = upnp_type
+    return info
+
+
+def parse_upnp_type(text: str) -> Optional[str]:
+    """"urn:schemas-upnp-org:device:MediaRenderer:1" -> "MediaRenderer"."""
+    m = re.search(r"<deviceType>[^<]*:device:([^:<]+)", text, re.I)
+    return m.group(1).strip() if m else None
 
 
 def ssdp_discover(local_ip: str, wait: float = 3.0) -> Dict[str, Dict[str, str]]:
@@ -259,13 +278,15 @@ def ssdp_discover(local_ip: str, wait: float = 3.0) -> Dict[str, Dict[str, str]]
 # ---------- Tổng hợp ----------
 
 def identify(ips: Iterable[str], local_ip: str) -> Dict[str, Dict[str, str]]:
-    """Chạy song song mọi nguồn. Trả {ip: {"name":..., "model":...}} (thiếu khoá nếu không rõ).
+    """Chạy song song mọi nguồn. Trả {ip: {"name", "model", "services", "upnp_type", "sources"}}
+    (thiếu khoá nếu không rõ).
 
     Ưu tiên tên: dịch vụ mDNS > UPnP friendlyName > tên máy (rDNS/mDNS/NetBIOS).
     Kết quả có thể gồm cả IP ngoài `ips`, vì mDNS/SSDP hỏi cả mạng.
     """
     ips = list(ips)
     results: Dict[str, dict] = {}
+    sources: Dict[str, set] = {}
 
     def worker(key, fn, *args):
         try:
@@ -274,7 +295,8 @@ def identify(ips: Iterable[str], local_ip: str) -> Dict[str, Dict[str, str]]:
             results[key] = {}
 
     threads = [
-        threading.Thread(target=worker, args=("host", resolve_names, ips, local_ip), daemon=True),
+        threading.Thread(target=worker, args=("host", resolve_names, ips, local_ip, sources),
+                         daemon=True),
         threading.Thread(target=worker, args=("mdns", mdns_services, local_ip), daemon=True),
         threading.Thread(target=worker, args=("ssdp", ssdp_discover, local_ip), daemon=True),
     ]
@@ -290,6 +312,9 @@ def identify(ips: Iterable[str], local_ip: str) -> Dict[str, Dict[str, str]]:
         info = {
             "name": m.get("name") or u.get("name") or host.get(ip),
             "model": m.get("model") or u.get("model"),
+            "services": m.get("services"),
+            "upnp_type": u.get("upnp_type"),
+            "sources": sources.get(ip),
         }
         merged[ip] = {k: v for k, v in info.items() if v}
     return merged
