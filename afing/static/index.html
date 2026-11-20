@@ -150,7 +150,10 @@ function el(tag, cls, text) {
 }
 
 function displayName(d) {
-  return d.custom_name || d.hostname || (d.is_gateway ? "Router / Gateway" : "") ||
+  // Chưa có tên thì dùng loại đã nhận diện (vd iPhone không gửi tên qua DHCP).
+  const byType = d.device_type === "mobile" && /^iOS/.test(d.os || "") ? "iPhone"
+    : [typeLabel(d), d.os].filter(Boolean).join(" ");
+  return d.custom_name || d.hostname || (d.is_gateway ? "Router / Gateway" : "") || byType ||
          (d.vendor ? "Thiết bị " + d.vendor : "Không rõ tên");
 }
 
