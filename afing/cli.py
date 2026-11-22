@@ -11,7 +11,7 @@ import time
 import traceback
 import webbrowser
 
-from . import __version__, autostart, config, notify
+from . import __version__, autostart, config, notify, report
 from .db import Database
 from .dhcp import DhcpListener, why_unavailable
 from .classify import TYPES
@@ -153,8 +153,11 @@ def load_settings(argv, double_clicked: bool = False):
     """
     args = build_parser().parse_args(argv)
     cfg_path = os.path.abspath(args.config or config.default_path())
-    if args.command in ("run", "install-autostart", "notify-setup") and config.ensure(cfg_path):
-        print(f"Đã tạo file cấu hình mẫu: {cfg_path}")
+    if args.command in ("run", "install-autostart", "notify-setup"):
+        if config.ensure(cfg_path):
+            print(f"Đã tạo file cấu hình mẫu: {cfg_path}")
+        for section in config.upgrade(cfg_path):
+            print(f"Đã thêm mục [{section}] mới vào {cfg_path}")
     settings = config.load(cfg_path)
 
     explicit = {}
@@ -280,6 +283,15 @@ def run(argv, double_clicked: bool = False) -> int:
     monitor.notifier = notify.Notifier(notify_path, db.devices)
     active = monitor.notifier.active_channels()
     log.info("Thông báo: %s", ", ".join(active) if active else "tắt (bật bằng lệnh notify-setup)")
+    monitor.reporter = report.Reporter(cfg_path, db.devices, str(net.network))
+    commands = report.TelegramCommands(cfg_path, monitor.reporter).start()
+    rs = report.settings(cfg_path)
+    when = [f"{h:02d}:{m:02d}" for h, m in rs["times"]]
+    if rs["interval_minutes"]:
+        when.append(f"mỗi {rs['interval_minutes']:g} phút")
+    log.info("Báo cáo định kỳ: %s | lệnh qua bot Telegram: %s", ", ".join(when) or "tắt",
+             "bật (/report, /online, /offline)" if rs["telegram_commands"] and "telegram" in active
+             else "tắt")
     listener = None
     if not args.no_dhcp:
         try:
@@ -311,6 +323,7 @@ def run(argv, double_clicked: bool = False) -> int:
     finally:
         if listener:
             listener.stop()
+        commands.stop()
         monitor.stop()
         thread.join(5)
         db.close()

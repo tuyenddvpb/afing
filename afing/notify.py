@@ -110,22 +110,36 @@ def _explain(error: Exception) -> str:
     return type(error).__name__
 
 
+def split_message(text: str, limit: int = 3500) -> List[str]:
+    """Cắt tin dài thành nhiều phần theo ranh giới dòng (Telegram và ntfy giới hạn khoảng 4096)."""
+    parts, current = [], ""
+    for line in text.split("\n"):
+        line = line[:limit]
+        if current and len(current) + 1 + len(line) > limit:
+            parts.append(current)
+            current = line
+        else:
+            current = f"{current}\n{line}" if current else line
+    return parts + [current] if current else parts
+
+
 def send(cfg: dict, text: str) -> List[Tuple[str, Optional[str]]]:
     """Gửi `text` qua mọi kênh đã cấu hình. Trả [(kênh, lỗi hoặc None)]."""
     results = []
     for channel in channels(cfg):
         try:
-            if channel == "telegram":
-                tg = cfg["telegram"]
-                _post(f"{TELEGRAM_API}/bot{tg['token']}/sendMessage",
-                      json.dumps({"chat_id": tg["chat_id"], "text": text,
-                                  "disable_web_page_preview": True}).encode(),
-                      {"Content-Type": "application/json"})
-            else:
-                nt = cfg["ntfy"]
-                server = (nt.get("server") or NTFY_SERVER).rstrip("/")
-                _post(f"{server}/{nt['topic']}", text.encode(),
-                      {"Title": "afing", "Content-Type": "text/plain; charset=utf-8"})
+            for part in split_message(text, 3500 if channel == "telegram" else 1200):
+                if channel == "telegram":
+                    tg = cfg["telegram"]
+                    _post(f"{TELEGRAM_API}/bot{tg['token']}/sendMessage",
+                          json.dumps({"chat_id": tg["chat_id"], "text": part,
+                                      "disable_web_page_preview": True}).encode(),
+                          {"Content-Type": "application/json"})
+                else:
+                    nt = cfg["ntfy"]
+                    server = (nt.get("server") or NTFY_SERVER).rstrip("/")
+                    _post(f"{server}/{nt['topic']}", part.encode(),
+                          {"Title": "afing", "Content-Type": "text/plain; charset=utf-8"})
             results.append((channel, None))
         except Exception as e:
             results.append((channel, _explain(e)))

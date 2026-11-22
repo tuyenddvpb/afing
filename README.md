@@ -156,6 +156,41 @@ quét kế tiếp. `notify-test` gửi lại tin thử; `notify-off` tắt và x
 Lưu ý: nội dung thông báo (tên, IP, MAC thiết bị) đi qua máy chủ của Telegram hoặc ntfy. Cấu hình
 lưu trong mục `[notify]` của `afing.cfg` và chứa token - đừng chia sẻ file này.
 
+## Báo cáo online/offline
+
+Ngoài tin báo từng sự kiện, afing gửi được **báo cáo tổng hợp** danh sách thiết bị online và
+offline (gần giống bảng trên dashboard) qua kênh đã đặt ở mục `[notify]`.
+
+**Định kỳ** - đặt trong mục `[report]` của `afing.cfg`:
+
+```ini
+[report]
+times = 08:00, 21:00       # gửi vào các giờ cố định mỗi ngày (giờ của máy chạy afing)
+interval_minutes = 0       # hoặc lặp lại mỗi N phút, ví dụ 60; 0 = tắt
+offline_days = 7           # chỉ liệt kê thiết bị offline thấy trong 7 ngày gần đây; 0 = tất cả
+telegram_commands = yes
+```
+
+(Chú thích `#` ở trên chỉ để minh hoạ; trong file thật hãy để chú thích ở dòng riêng.) Thay đổi
+ở mục này được áp dụng ngay, không cần khởi động lại.
+
+**Theo yêu cầu** - nhắn cho bot Telegram:
+
+| Lệnh | Trả về |
+|---|---|
+| `/report` | Tất cả thiết bị, online và offline |
+| `/online` | Chỉ thiết bị đang online |
+| `/offline` | Chỉ thiết bị đang offline |
+| `/help` | Danh sách lệnh |
+
+Bot chỉ trả thông tin thiết bị cho đúng cuộc trò chuyện có `telegram_chat_id` trong file cấu
+hình. Người khác nhắn cho bot sẽ không nhận được gì, trừ `/start` hoặc `/chatid` trả về ID cuộc
+trò chuyện của chính họ (tiện để lấy chat_id khi tự cấu hình). Lệnh theo yêu cầu chỉ có với
+Telegram; ntfy chỉ nhận báo cáo định kỳ.
+
+Lưu ý: afing phải đang chạy thì bot mới trả lời. Lệnh nhắn lúc afing tắt sẽ bị bỏ qua khi nó
+chạy lại. Chỉ nên có một bản afing dùng cùng một bot; hai bản cùng lúc sẽ tranh nhau nhận lệnh.
+
 ## Nghe DHCP
 
 Khi kết nối vào mạng, thiết bị broadcast gói DHCP chứa tên máy của nó và các dấu hiệu nhận ra

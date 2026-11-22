@@ -9,7 +9,7 @@ import configparser
 import os
 import re
 import sys
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 FILE_NAME = "afing.cfg"
 
@@ -57,6 +57,18 @@ ntfy_topic =
 ntfy_server = https://ntfy.sh
 # Thiết bị vắng mặt liên tục bấy nhiêu phút mới báo "rời mạng"
 leave_after_minutes = 5
+
+[report]
+# Báo cáo danh sách thiết bị online/offline, gửi qua kênh đã đặt ở mục [notify].
+# Gửi vào các giờ cố định mỗi ngày (giờ của máy chạy afing), cách nhau bằng dấu phẩy.
+# Ví dụ: 08:00, 12:30, 21:00. Để trống = không gửi theo giờ.
+times =
+# Hoặc gửi lặp lại sau mỗi bấy nhiêu phút (ví dụ 60 = mỗi giờ). 0 = tắt.
+interval_minutes = 0
+# Chỉ liệt kê thiết bị offline được thấy trong bấy nhiêu ngày gần đây. 0 = liệt kê tất cả.
+offline_days = 7
+# Nhắn /report, /online, /offline cho bot Telegram để nhận báo cáo ngay (yes/no)
+telegram_commands = yes
 """
 
 # (mục, khoá) -> kiểu. Giá trị mặc định lấy từ TEMPLATE để không phải khai hai nơi.
@@ -69,6 +81,8 @@ KINDS: Dict[Tuple[str, str], str] = {
     ("notify", "telegram_token"): "str", ("notify", "telegram_chat_id"): "str",
     ("notify", "ntfy_topic"): "str", ("notify", "ntfy_server"): "str",
     ("notify", "leave_after_minutes"): "number",
+    ("report", "times"): "times", ("report", "interval_minutes"): "nonneg",
+    ("report", "offline_days"): "nonneg", ("report", "telegram_commands"): "bool",
 }
 _BOOLS = {"yes": True, "true": True, "on": True, "1": True,
           "no": False, "false": False, "off": False, "0": False}
@@ -107,14 +121,24 @@ def _convert(section: str, key: str, raw: str, name: str):
         if raw not in ("auto", "arp", "passive"):
             raise ConfigError(f"{where} phải là auto, arp hoặc passive")
         return raw
+    if kind == "times":
+        times = []
+        for part in filter(None, (p.strip() for p in raw.split(","))):
+            m = re.fullmatch(r"(\d{1,2})[:hH](\d{2})", part)
+            if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+                raise ConfigError(f"{where}: {part!r} phải có dạng giờ:phút, ví dụ 08:00")
+            times.append((int(m.group(1)), int(m.group(2))))
+        return times
     try:
-        value = float(raw) if kind == "number" else int(raw)
+        value = float(raw) if kind in ("number", "nonneg") else int(raw)
     except ValueError:
         raise ConfigError(f"{where} phải là một số") from None
     if kind == "port" and not 1 <= value <= 65535:
         raise ConfigError(f"{where} phải nằm trong khoảng 1-65535")
     if kind in ("positive", "number") and value <= 0:
         raise ConfigError(f"{where} phải lớn hơn 0")
+    if kind == "nonneg" and value < 0:
+        raise ConfigError(f"{where} không được âm")
     return value
 
 
@@ -160,6 +184,28 @@ def ensure(path: str) -> bool:
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(TEMPLATE)
     return True
+
+
+def upgrade(path: str) -> List[str]:
+    """Thêm vào file cấu hình cũ những mục mà bản afing mới có (kèm chú thích). Trả tên các mục đã thêm."""
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8-sig") as f:
+        text = f.read()
+    have = {m.lower() for m in re.findall(r"^\s*\[([^\]]+)\]\s*$", text, re.M)}
+    blocks = re.split(r"(?m)^(?=\[)", TEMPLATE)[1:]  # mỗi khối bắt đầu bằng dòng [tên mục]
+    added = []
+    for block in blocks:
+        name = block[1:block.index("]")]
+        if name.lower() not in have:
+            text = text.rstrip("\n") + "\n\n" + block.rstrip("\n") + "\n"
+            added.append(name)
+    if added:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    return added
 
 
 def set_values(path: str, section: str, values: Dict[str, object]) -> None:

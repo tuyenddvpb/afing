@@ -11,7 +11,7 @@ import urllib.request
 import socket
 import time
 
-from afing import alias, autostart, cli, config, dhcp, notify, discovery, names, netinfo, scanner
+from afing import alias, autostart, cli, config, dhcp, notify, report, discovery, names, netinfo, scanner
 from afing.classify import TYPES, classify
 from afing.monitor import describe
 from afing.db import Database
@@ -592,6 +592,10 @@ class FakeChatService:
     def __init__(self, status=200):
         from http.server import BaseHTTPRequestHandler, HTTPServer
         self.requests = []
+        self.updates = [
+            {"update_id": 1, "message": {"chat": {"id": 111, "first_name": "Old"}}},
+            {"update_id": 2, "message": {"chat": {"id": 987654, "first_name": "Tuyen", "last_name": "D"}}},
+        ]
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -610,11 +614,13 @@ class FakeChatService:
                 self._reply(b'{"ok":false,"description":"Unauthorized"}' if status != 200 else b"{}")
 
             def do_GET(self):
+                from urllib.parse import parse_qs, urlsplit
                 outer.requests.append((self.path, dict(self.headers), b""))
-                self._reply(json.dumps({"ok": True, "result": [
-                    {"message": {"chat": {"id": 111, "first_name": "Old"}}},
-                    {"message": {"chat": {"id": 987654, "first_name": "Tuyen", "last_name": "D"}}},
-                ]}).encode())
+                query = parse_qs(urlsplit(self.path).query)
+                offset = int(query.get("offset", ["0"])[0])
+                found = outer.updates[-1:] if offset < 0 else \
+                    [u for u in outer.updates if u["update_id"] >= offset]
+                self._reply(json.dumps({"ok": True, "result": found}).encode())
 
         self.server = HTTPServer(("127.0.0.1", 0), H)
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -830,6 +836,168 @@ class ConfigTests(unittest.TestCase):
             self.assertIn("# Cổng của dashboard", f.read())                       # chú thích còn nguyên
         notify.disable(self.path, lambda s: None)
         self.assertEqual(notify.load_config(self.path), {"leave_after_minutes": 2.0})
+
+
+class ReportTests(unittest.TestCase):
+    NOW = 1_800_000_000
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg = os.path.join(self.tmp.name, "afing.cfg")
+        config.ensure(self.cfg)
+        config.set_values(self.cfg, "notify", {"telegram_token": "123:ABC", "telegram_chat_id": 987654})
+        self.db = Database(os.path.join(self.tmp.name, "t.db"))
+        self.tv, self.phone, self.old = "68:72:c3:01:d6:be", "f8:10:93:3b:a5:03", "aa:aa:aa:aa:aa:09"
+        self.db.apply_scan({"10.0.0.9": self.old}, self.NOW - 30 * 86400, 45)
+        self.db.apply_scan({"10.0.0.4": self.tv, "10.0.0.28": self.phone}, self.NOW - 7200, 45)
+        self.db.apply_scan({"10.0.0.4": self.tv}, self.NOW, 45)
+        self.db.set_identities({self.tv: {"name": "[TV] Samsung", "type": "tv"},
+                                self.phone: {"name": "MDs-phone", "type": "mobile"}})
+        self.sent = []
+        self.reporter = report.Reporter(self.cfg, self.db.devices, "10.0.0.0/24",
+                                        sender=lambda cfg, text: self.sent.append(text) or [])
+        self._api = notify.TELEGRAM_API
+
+    def tearDown(self):
+        notify.TELEGRAM_API = self._api
+        self.db.close()
+        self.tmp.cleanup()
+
+    def alias_of(self, mac):
+        a = next(d["alias"] for d in self.db.devices() if d["mac"] == mac)
+        return f"{alias.icon(a)} {a}"
+
+    def test_report_text(self):
+        text = self.reporter.text(now=self.NOW)
+        stamp = time.strftime("%d %b %H:%M", time.localtime(self.NOW))
+        self.assertEqual(text.split("\n"), [
+            "📊 afing report · 10.0.0.0/24",
+            f"{stamp} · 1 online · 2 offline",
+            "",
+            "🟢 ONLINE (1)",
+            f"{self.alias_of(self.tv)} — [TV] Samsung · TV · 10.0.0.4",
+            "",
+            "⚪ OFFLINE (2)",
+            f"{self.alias_of(self.phone)} — MDs-phone · Phone · last seen 2 hr ago",
+            "(+1 not seen for over 7 days)",
+        ])
+        online = self.reporter.text("online", self.NOW)
+        self.assertIn("🟢 ONLINE (1)", online)
+        self.assertNotIn("OFFLINE (", online)
+        config.set_values(self.cfg, "report", {"offline_days": 0})
+        self.assertIn("last seen 30 days ago", self.reporter.text("offline", self.NOW))
+        self.assertEqual([report.ago(s) for s in (5, 600, 7300, 86400, 200000)],
+                         ["just now", "10 min ago", "2 hr ago", "1 day ago", "2 days ago"])
+
+    def test_split_message(self):
+        text = "\n".join(f"line {i}" for i in range(400))
+        parts = notify.split_message(text, 500)
+        self.assertTrue(all(len(p) <= 500 for p in parts))
+        self.assertEqual("\n".join(parts), text)
+        self.assertEqual(notify.split_message("short"), ["short"])
+        self.assertEqual(notify.split_message("x" * 50, 20), ["x" * 20])  # một dòng quá dài: cắt bớt
+
+    def at(self, hour, minute, day_offset=0):
+        base = time.localtime(self.NOW)
+        return time.mktime(base[:3] + (hour, minute, 0, 0, 0, -1)) + day_offset * 86400
+
+    def test_schedule_fixed_times(self):
+        config.set_values(self.cfg, "report", {"times": "08:00, 21:30"})
+        s = report.Schedule(self.cfg)
+        self.assertFalse(s.due(self.at(9, 0)))            # khởi động sau 08:00: không gửi bù
+        self.assertFalse(s.due(self.at(21, 29)))
+        self.assertTrue(s.due(self.at(21, 30, 0) + 5))    # vừa qua mốc
+        self.assertFalse(s.due(self.at(21, 31)))          # không gửi lặp
+        self.assertFalse(s.due(self.at(23, 59)))
+        self.assertTrue(s.due(self.at(8, 0, 1) + 3))      # 08:00 hôm sau
+        self.assertTrue(s.due(self.at(21, 40, 1)))        # máy ngủ qua mốc 21:30: gửi khi thức
+        config.set_values(self.cfg, "report", {"times": ""})
+        self.assertFalse(s.due(self.at(21, 30, 2) + 1))   # đã tắt
+
+    def test_schedule_interval_and_tick_sends(self):
+        config.set_values(self.cfg, "report", {"interval_minutes": 60})
+        t = self.NOW
+        self.assertFalse(self.reporter.tick(t))
+        self.assertFalse(self.reporter.tick(t + 3599))
+        self.assertTrue(self.reporter.tick(t + 3600))
+        self.assertFalse(self.reporter.tick(t + 3700))
+        self.assertTrue(self.reporter.tick(t + 7200))
+        config.set_values(self.cfg, "report", {"interval_minutes": 10})  # đổi chu kỳ: tính lại
+        self.assertFalse(self.reporter.tick(t + 7300))
+        self.assertTrue(self.reporter.tick(t + 7300 + 600))
+        for _ in range(50):
+            if len(self.sent) == 3:
+                break
+            time.sleep(0.02)
+        self.assertEqual(len(self.sent), 3)
+        self.assertTrue(self.sent[0].startswith("📊 afing report"))
+        # chưa cấu hình kênh nào thì không gửi
+        notify.disable(self.cfg, lambda s: None)
+        self.assertFalse(self.reporter.tick(t + 7900 + 600))
+
+    def test_config_times_validation_and_upgrade_of_old_cfg(self):
+        config.set_values(self.cfg, "report", {"times": "8:05,21h30 , 00:00"})
+        self.assertEqual(report.settings(self.cfg)["times"], [(8, 5), (21, 30), (0, 0)])
+        for bad in ("25:00", "8", "08:60", "sáng"):
+            config.set_values(self.cfg, "report", {"times": bad})
+            with self.assertRaises(config.ConfigError):
+                config.load(self.cfg)
+        self.assertEqual(report.settings(self.cfg)["times"], [])     # file lỗi: coi như tắt
+
+        old = os.path.join(self.tmp.name, "old.cfg")
+        with open(old, "w", encoding="utf-8") as f:
+            f.write("# của tôi\n[web]\nport = 9000\n\n[notify]\ntelegram_token = 1:A\n")
+        self.assertEqual(config.upgrade(old), ["scan", "data", "report"])
+        self.assertEqual(config.upgrade(old), [])
+        loaded = config.load(old)
+        self.assertEqual((loaded["web", "port"], loaded["notify", "telegram_token"]), (9000, "1:A"))
+        with open(old, encoding="utf-8") as f:
+            text = f.read()
+        self.assertTrue(text.startswith("# của tôi\n[web]\nport = 9000\n"))
+        self.assertIn("[report]\n# Báo cáo danh sách", text)
+
+    def test_bot_commands_only_answer_the_configured_chat(self):
+        bot = report.TelegramCommands(self.cfg, self.reporter)
+
+        def ask(text, chat=987654):
+            return bot.replies({"update_id": 1, "message": {"chat": {"id": chat}, "text": text}}, 987654)
+
+        ((chat, text),) = ask("/report")
+        self.assertEqual(chat, 987654)
+        self.assertIn("🟢 ONLINE (1)", text)
+        self.assertIn("⚪ OFFLINE (2)", text)
+        self.assertNotIn("OFFLINE (", ask("/online@afing_bot")[0][1])
+        self.assertNotIn("ONLINE (1)", ask("offline")[0][1])
+        self.assertEqual(ask("/whatever")[0][1], report.HELP)
+        self.assertEqual(ask("/help")[0][1], report.HELP)
+        # người lạ: không lộ thiết bị; chỉ được biết ID cuộc trò chuyện của chính họ
+        self.assertEqual(ask("/report", chat=555), [])
+        ((chat, text),) = ask("/start", chat=555)
+        self.assertEqual(chat, 555)
+        self.assertIn("555", text)
+        self.assertNotIn("10.0.0", text)
+        self.assertEqual(bot.replies({"update_id": 2}, 987654), [])
+        self.assertEqual(bot.replies({"message": {"chat": {"id": 987654}}}, 987654), [])  # ảnh, sticker
+
+    def test_bot_polling_roundtrip(self):
+        svc = FakeChatService()
+        notify.TELEGRAM_API = svc.url
+        bot = report.TelegramCommands(self.cfg, self.reporter)
+        try:
+            svc.updates.append({"update_id": 7, "message": {"chat": {"id": 987654}, "text": "/report"}})
+            self.assertEqual(bot.poll_once(wait=0), 0)        # lệnh tồn từ trước khi khởi động: bỏ qua
+            svc.updates.append({"update_id": 8, "message": {"chat": {"id": 987654}, "text": "/online"}})
+            svc.updates.append({"update_id": 9, "message": {"chat": {"id": 555}, "text": "/report"}})
+            self.assertEqual(bot.poll_once(wait=0), 1)
+            posts = [(p, json.loads(b)) for p, _, b in svc.requests if b]
+            self.assertEqual(len(posts), 1)
+            self.assertEqual(posts[0][0], "/bot123:ABC/sendMessage")
+            self.assertEqual(posts[0][1]["chat_id"], 987654)
+            self.assertIn("🟢 ONLINE (1)", posts[0][1]["text"])
+            self.assertEqual(bot.poll_once(wait=0), 0)        # không trả lời lại lệnh cũ
+            self.assertIn("offset=10", svc.requests[-1][0])
+        finally:
+            svc.close()
 
 
 class OuiTests(unittest.TestCase):
