@@ -4,8 +4,11 @@ import argparse
 import ipaddress
 import logging
 import os
+import sys
 import threading
 import time
+import traceback
+import webbrowser
 
 from . import __version__
 from .db import Database
@@ -19,6 +22,16 @@ from .scanner import Scanner
 from .web import make_server
 
 log = logging.getLogger("afing")
+
+
+def is_frozen() -> bool:
+    """True khi đang chạy từ file .exe đóng gói bằng PyInstaller."""
+    return bool(getattr(sys, "frozen", False))
+
+
+def default_db_path() -> str:
+    # Bản .exe lưu dữ liệu cạnh file exe để mở từ shortcut nào cũng dùng chung một database.
+    return os.path.join(os.path.dirname(sys.executable), "afing.db") if is_frozen() else "afing.db"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,11 +48,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="không thấy thiết bị quá số giây này thì coi là đã rời mạng (45)")
     p.add_argument("--method", choices=["auto", "arp", "passive"], default="auto",
                    help="arp: ARP scan bằng scapy (cần root) | passive: đọc bảng ARP của HĐH")
-    p.add_argument("--db", default="afing.db", help="đường dẫn file SQLite (afing.db)")
+    p.add_argument("--db", default=default_db_path(),
+                   help="đường dẫn file SQLite (mặc định afing.db; bản .exe: cạnh file exe)")
     p.add_argument("--host", default="127.0.0.1",
                    help="địa chỉ web lắng nghe; dùng 0.0.0.0 để máy khác trong LAN xem được")
     p.add_argument("--port", type=int, default=8080, help="cổng web (8080)")
     p.add_argument("--no-web", action="store_true", help="chỉ quét và ghi DB, không mở web")
+    p.add_argument("--open-browser", action="store_true",
+                   help="tự mở dashboard bằng trình duyệt mặc định khi khởi động")
     p.add_argument("--no-dhcp", action="store_true",
                    help="không nghe gói DHCP (mặc định có nghe nếu đủ quyền mở cổng 67)")
     p.add_argument("--no-oui-download", action="store_true",
@@ -99,6 +115,29 @@ def listen_dhcp(oui: OuiTable) -> int:
 
 
 def main(argv=None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:  # console Windows dùng bảng mã cũ: thay ký tự không in được thay vì văng lỗi
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+    argv = sys.argv[1:] if argv is None else list(argv)
+    # Bấm đúp vào file exe: chạy luôn chế độ quét liên tục và mở dashboard.
+    double_clicked = is_frozen() and not argv
+    if double_clicked:
+        argv = ["run", "--open-browser"]
+    try:
+        code = run(argv)
+    except Exception:
+        if not double_clicked:
+            raise
+        traceback.print_exc()
+        code = 1
+    if double_clicked and code:
+        input("\nNhấn Enter để đóng cửa sổ...")  # không thì cửa sổ tắt trước khi kịp đọc lỗi
+    return code
+
+
+def run(argv) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 
@@ -143,7 +182,7 @@ def main(argv=None) -> int:
                 log.info("Đã tải bảng hãng sản xuất (%d hãng)", oui.download())
             except Exception as e:
                 log.warning("Không tải được bảng hãng sản xuất (%s). "
-                            "Thử lại sau bằng: python -m afing update-oui", e)
+                            "Thử lại sau bằng lệnh update-oui", e)
         threading.Thread(target=fetch, daemon=True).start()
 
     db = Database(args.db)
@@ -162,9 +201,17 @@ def main(argv=None) -> int:
             while thread.is_alive():
                 thread.join(1)
         else:
-            server = make_server(args.host, args.port, db, monitor)
+            try:
+                server = make_server(args.host, args.port, db, monitor)
+            except OSError as e:
+                print(f"Lỗi: không mở được cổng web {args.port} ({e.strerror or e}). "
+                      f"afing đang chạy sẵn? Thử cổng khác bằng --port.")
+                return 1
             shown = "localhost" if args.host in ("127.0.0.1", "0.0.0.0") else args.host
-            log.info("Dashboard: http://%s:%d  (Ctrl+C để dừng)", shown, args.port)
+            url = f"http://{shown}:{args.port}"
+            log.info("Dashboard: %s  (Ctrl+C để dừng)", url)
+            if args.open_browser:
+                threading.Timer(1.0, webbrowser.open, [url]).start()
             server.serve_forever()
     except KeyboardInterrupt:
         pass

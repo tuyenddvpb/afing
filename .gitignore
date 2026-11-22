@@ -6,3 +6,5 @@ __pycache__/
 oui.csv
 oui.csv.tmp
 .venv/
+build/
+dist/

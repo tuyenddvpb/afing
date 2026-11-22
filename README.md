@@ -39,6 +39,27 @@ Tuỳ chọn thường dùng (xem đủ bằng `python -m afing --help`):
 Dashboard không có đăng nhập. Mặc định chỉ máy đang chạy afing mở được; với `--host 0.0.0.0`
 thì mọi máy trong LAN đều xem và đổi tên thiết bị được. Đừng mở cổng này ra Internet.
 
+## Đóng gói thành file .exe (Windows)
+
+Gói thành một file `afing.exe` duy nhất, chạy được trên máy Windows khác mà không cần cài Python.
+File exe phải được build trên Windows. Có hai cách:
+
+- **Trên máy bạn:** bấm đúp `build_exe.bat` (cần Python 3.9+). Kết quả ở `dist\afing.exe`.
+- **Để GitHub build:** vào tab Actions > "Build Windows exe" > Run workflow, rồi tải artifact
+  `afing-windows`. Workflow cũng tự chạy khi đẩy một tag dạng `v1.0`.
+
+Dùng trên máy đích:
+
+- Bấm đúp `afing.exe`: tự quét liên tục và mở dashboard trong trình duyệt.
+- Muốn nghe DHCP (lấy tên iPhone...): bấm chuột phải > "Run as administrator".
+- Dữ liệu (`afing.db`, `oui.csv`) nằm cạnh file exe; chép cả thư mục nếu muốn mang theo lịch sử
+  và alias.
+- Các lệnh khác vẫn dùng được từ terminal: `afing.exe scan`, `afing.exe mdns`,
+  `afing.exe --host 0.0.0.0`...
+
+File exe không có chữ ký số nên lần đầu Windows SmartScreen sẽ cảnh báo (bấm More info > Run
+anyway), và một số phần mềm diệt virus có thể báo nhầm với file gói bằng PyInstaller.
+
 ## Cách quét
 
 | Chế độ | Yêu cầu | Đặc điểm |
