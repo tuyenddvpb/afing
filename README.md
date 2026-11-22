@@ -104,8 +104,7 @@ thì mọi máy trong LAN đều xem và đổi tên thiết bị được. Đ�
 
 ## Cài đặt trên Windows
 
-Cách dễ nhất là dùng bộ cài **`afing-setup.exe`** (tải ở trang Releases, hoặc ở mục Artifacts của
-lần chạy workflow "Build Windows exe"):
+Cách dễ nhất là dùng bộ cài **`afing-setup.exe`** (tự build bằng `build_exe.bat`, xem mục dưới):
 
 - cài vào `C:\Program Files\afing`, đăng ký tự chạy khi Windows khởi động và chạy ngay;
 - thêm biểu tượng afing ở **khay hệ thống** (cạnh đồng hồ): rê chuột để xem số thiết bị online,
@@ -127,9 +126,11 @@ và tạo bản phát hành kèm `afing-setup.exe`, `afing.exe`, `afing-tray.exe
 Gói thành một file `afing.exe` duy nhất, chạy được trên máy Windows khác mà không cần cài Python.
 File exe phải được build trên Windows. Có hai cách:
 
-- **Trên máy bạn:** bấm đúp `build_exe.bat` (cần Python 3.9+). Kết quả ở `dist\afing.exe`.
-- **Để GitHub build:** vào tab Actions > "Build Windows exe" > Run workflow, rồi tải artifact
-  `afing-windows`. Workflow cũng tự chạy khi đẩy một tag dạng `v1.0`.
+- **Trên máy bạn:** bấm đúp `build_exe.bat` (cần Python 3.9+). Script cài PyInstaller, chạy test,
+  rồi tạo trong thư mục `dist`: `afing.exe`, `afing-tray.exe` (biểu tượng khay hệ thống), và
+  `afing-setup.exe` nếu máy có [Inno Setup 6](https://jrsoftware.org/isdl.php).
+- **Để GitHub build:** workflow "Build Windows exe" chạy khi đẩy một tag dạng `v1.0` (hoặc bấm Run
+  workflow trong tab Actions) và tạo bản phát hành kèm các file trên.
 
 Dùng trên máy đích:
 

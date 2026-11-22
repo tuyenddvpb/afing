@@ -124,7 +124,8 @@ jobs:
           "installed afing $($s.status.version) is running with $($s.devices.Count) devices"
           $u = Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -PassThru
           if (-not $u.WaitForExit(120000)) { $u.Kill(); Write-Error "uninstaller hung"; exit 1 }
-          Start-Sleep 3
+          # unins000.exe tu chep ra thu muc tam roi lam viec tiep: cho toi khi xong
+          foreach ($i in 1..30) { if (-not (Test-Path "$app\afing.exe")) { break }; Start-Sleep 2 }
           schtasks /Query /TN afing 2>$null
           if ($LASTEXITCODE -eq 0) { Write-Error "uninstall left the autostart task"; exit 1 }
           if (Test-Path "$app\afing.exe") { Write-Error "uninstall left afing.exe"; exit 1 }

@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from typing import List, Tuple
 from xml.sax.saxutils import escape
 
@@ -96,6 +97,27 @@ def _precheck() -> str:
     return ""
 
 
+def stop_other_instances(wait: float = 10.0) -> None:
+    """Tắt hẳn mọi tiến trình afing.exe khác (trừ chính lệnh này) và chờ chúng thoát.
+
+    Cần cho trình gỡ cài đặt và lúc nâng cấp: Windows không cho xoá hay ghi đè file exe đang chạy.
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    name = os.path.basename(sys.executable)
+    # Bản đóng gói một-file chạy thành hai tiến trình (bộ nạp + chương trình): chừa cả hai.
+    keep = ["/FI", f"PID ne {os.getpid()}", "/FI", f"PID ne {os.getppid()}"]
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        subprocess.run(["taskkill", "/F", "/IM", name, *keep], capture_output=True)
+        listed = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"],
+                                capture_output=True, text=True, errors="replace").stdout
+        pids = {line.split(",")[1].strip('"') for line in listed.splitlines() if line.count(",") >= 1}
+        if not pids - {str(os.getpid()), str(os.getppid())}:
+            return
+        time.sleep(0.5)
+
+
 def install(extra_args: List[str], port: int) -> int:
     problem = _precheck()
     if problem:
@@ -146,6 +168,7 @@ def uninstall() -> int:
     _schtasks("/End", "/TN", TASK_NAME)  # dừng bản đang chạy nền, nếu có
     subprocess.run(["reg", "delete", RUN_KEY, "/v", TRAY_VALUE, "/f"], capture_output=True)
     subprocess.run(["taskkill", "/IM", TRAY_EXE, "/F"], capture_output=True)
+    stop_other_instances()
     deleted = _schtasks("/Delete", "/TN", TASK_NAME, "/F")
     if deleted.returncode:
         print("Lỗi: không gỡ được tác vụ (chưa từng cài?).\n"
