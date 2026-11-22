@@ -2,6 +2,7 @@
 
 import argparse
 import ipaddress
+import json
 import logging
 import logging.handlers
 import os
@@ -9,9 +10,11 @@ import sys
 import threading
 import time
 import traceback
+import urllib.error
+import urllib.request
 import webbrowser
 
-from . import __version__, autostart, config, notify, report
+from . import __version__, autostart, config, notify, report, tray, update
 from .db import Database
 from .dhcp import DhcpListener, why_unavailable
 from .classify import TYPES
@@ -37,13 +40,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"afing {__version__}")
     p.add_argument("command", nargs="?", default="run", choices=["run", "scan", "dhcp", "mdns", "update-oui",
                             "install-autostart", "uninstall-autostart",
-                            "notify-setup", "notify-test", "notify-off"],
+                            "notify-setup", "notify-test", "notify-off", "update", "tray"],
                    help="run: quét liên tục + web (mặc định) | scan: quét 1 lần rồi in ra |"
                         " dhcp: chỉ nghe và in gói DHCP (để thử) | mdns: in mọi thứ nghe được qua mDNS (để thử) | update-oui: tải bảng hãng sản xuất |"
                         " install-autostart / uninstall-autostart: bật / tắt tự chạy khi Windows"
                         " khởi động (cần quyền admin) |"
                         " notify-setup / notify-test / notify-off: cài, thử, tắt thông báo ra"
-                        " điện thoại (Telegram hoặc ntfy)")
+                        " điện thoại (Telegram hoặc ntfy) |"
+                        " update: tải và cài bản afing.exe mới nhất |"
+                        " tray: hiện biểu tượng ở khay hệ thống")
     p.add_argument("--config", help="file cấu hình (mặc định afing.cfg cạnh afing.exe, hoặc ở "
                                     "thư mục hiện tại khi chạy từ mã nguồn)")
     p.add_argument("--subnet", help="subnet cần quét, vd 192.168.1.0/24 (mặc định: tự dò)")
@@ -146,6 +151,32 @@ CLI_TO_CONFIG = {
 }
 
 
+def already_running(url: str) -> bool:
+    """Cổng web đang do một bản afing khác giữ?"""
+    try:
+        with urllib.request.urlopen(url + "/api/state", timeout=3) as resp:
+            return "status" in json.load(resp)
+    except urllib.error.HTTPError as e:
+        return "afing" in (e.headers.get("WWW-Authenticate") or "")  # dashboard có đặt mật khẩu
+    except Exception:
+        return False
+
+
+def watch_for_updates(monitor, cfg_path: str, stop: threading.Event) -> None:
+    """Mỗi ngày hỏi GitHub một lần xem có bản mới; kết quả hiện trên dashboard."""
+    while not stop.wait(30 if monitor.status["update"] is None and not stop.is_set() else 86400):
+        try:
+            enabled = config.load(cfg_path)[("web", "update_check")]
+        except config.ConfigError:
+            enabled = False
+        release = update.check() if enabled else None
+        monitor.status["update"] = ({"version": release["version"], "url": release["url"]}
+                                    if release else False)
+        if release:
+            log.info("Có bản afing mới: %s (đang dùng %s). Cập nhật bằng lệnh update.",
+                     release["version"], __version__)
+
+
 def load_settings(argv, double_clicked: bool = False):
     """Đọc tham số dòng lệnh rồi lấp các chỗ trống bằng afing.cfg.
 
@@ -211,6 +242,15 @@ def run(argv, double_clicked: bool = False) -> int:
         return notify.test(notify_path)
     if args.command == "notify-off":
         return notify.disable(notify_path)
+    if args.command == "update":
+        return update.install()
+    if args.command == "tray":
+        try:
+            return tray.run(cfg_path)
+        except ImportError:
+            print("Lỗi: cần cài thêm thư viện: pip install pystray pillow "
+                  "(bản đóng gói thì chạy afing-tray.exe).")
+            return 1
     if args.command == "uninstall-autostart":
         return autostart.uninstall()
     if args.command == "install-autostart":
@@ -287,6 +327,9 @@ def run(argv, double_clicked: bool = False) -> int:
     log.info("Thông báo: %s", ", ".join(active) if active else "tắt (bật bằng lệnh notify-setup)")
     monitor.reporter = report.Reporter(cfg_path, db.devices, str(net.network),
                                        online_since=db.online_since)
+    stop_updates = threading.Event()
+    threading.Thread(target=watch_for_updates, args=(monitor, cfg_path, stop_updates),
+                     daemon=True).start()
     commands = report.TelegramCommands(cfg_path, monitor.reporter, db).start()
     rs = report.settings(cfg_path)
     when = [f"{h:02d}:{m:02d}" for h, m in rs["times"]]
@@ -312,6 +355,13 @@ def run(argv, double_clicked: bool = False) -> int:
             try:
                 server = make_server(args.host, args.port, db, monitor, cfg_path, args.log_file)
             except OSError as e:
+                url = f"http://localhost:{args.port}"
+                if already_running(url):
+                    # Bấm đúp khi afing đã chạy nền: chỉ cần mở dashboard của bản đang chạy.
+                    print(f"afing đang chạy sẵn. Dashboard: {url}")
+                    if args.open_browser:
+                        webbrowser.open(url)
+                    return 0
                 print(f"Lỗi: không mở được cổng web {args.port} ({e.strerror or e}). "
                       f"afing đang chạy sẵn? Đổi cổng ở mục [web] trong {cfg_path}.")
                 return 1
@@ -327,6 +377,7 @@ def run(argv, double_clicked: bool = False) -> int:
         if listener:
             listener.stop()
         commands.stop()
+        stop_updates.set()
         monitor.stop()
         thread.join(5)
         db.close()

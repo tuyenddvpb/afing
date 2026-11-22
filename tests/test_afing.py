@@ -12,7 +12,7 @@ import urllib.request
 import socket
 import time
 
-from afing import alias, autostart, cli, config, dhcp, notify, report, discovery, names, netinfo, scanner
+from afing import alias, autostart, cli, config, dhcp, notify, report, tray, update, discovery, names, netinfo, scanner
 from afing.classify import TYPES, classify
 from afing.monitor import describe
 from afing.db import Database
@@ -1346,6 +1346,113 @@ class ReportTests(unittest.TestCase):
             self.assertIn("offset=10", svc.requests[-1][0])
         finally:
             svc.close()
+
+
+class UpdateTrayTests(unittest.TestCase):
+    def serve(self, routes):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                status, body, headers = routes.get(self.path.split("?")[0], (404, b"{}", {}))
+                self.send_response(status)
+                for k, v in headers.items():
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return f"http://127.0.0.1:{srv.server_address[1]}"
+
+    def test_versions(self):
+        self.assertEqual(update.parse_version("v1.2.10"), (1, 2, 10))
+        self.assertEqual(update.parse_version("nightly"), ())
+        self.assertTrue(update.is_newer("0.2.0", "0.1.9"))
+        self.assertTrue(update.is_newer("1.0", "0.9.9"))
+        self.assertFalse(update.is_newer("0.1.0", "0.1.0"))
+        self.assertFalse(update.is_newer("0.0.9", "0.1.0"))
+        self.assertFalse(update.is_newer("garbage", "0.1.0"))
+
+    def test_only_github_https_downloads_are_allowed(self):
+        self.assertTrue(update._allowed("https://github.com/tuyenddvpb/afing/releases/download/v1/afing.exe"))
+        for bad in ("http://github.com/x/afing.exe", "https://github.com.evil.io/afing.exe",
+                    "https://evil.io/github.com/afing.exe", "file:///c:/afing.exe", None, ""):
+            self.assertFalse(update._allowed(bad), bad)
+
+    def test_release_lookup_check_and_verified_download(self):
+        payload = b"MZ fake exe"
+        import hashlib
+        good = hashlib.sha256(payload).hexdigest()
+        base = None
+        routes = {}
+        base = self.serve(routes)
+        release = {"tag_name": "v9.9.9", "html_url": "https://github.com/tuyenddvpb/afing/releases/tag/v9.9.9",
+                   "assets": [{"name": "afing.exe", "browser_download_url": base + "/afing.exe"},
+                              {"name": "afing.exe.sha256", "browser_download_url": base + "/sum"}]}
+        routes[f"/repos/{update.REPO}/releases/latest"] = (200, json.dumps(release).encode(), {})
+        routes["/afing.exe"] = (200, payload, {})
+        routes["/sum"] = (200, (good + "  afing.exe\n").encode(), {})
+        original = (update.API, update._allowed)
+        update.API = base
+        try:
+            found = update.check()
+            self.assertEqual((found["version"], found["exe"]), ("9.9.9", base + "/afing.exe"))
+            with tempfile.TemporaryDirectory() as tmp:
+                target = os.path.join(tmp, "new.exe")
+                with self.assertRaises(RuntimeError):          # máy chủ lạ: từ chối
+                    update.download_verified(found, target)
+                update._allowed = lambda url: bool(url)
+                update.download_verified(found, target)
+                with open(target, "rb") as f:
+                    self.assertEqual(f.read(), payload)
+                os.remove(target)
+                routes["/sum"] = (200, b"0" * 64, {})
+                with self.assertRaises(RuntimeError):          # sai mã SHA-256: không ghi file
+                    update.download_verified(found, target)
+                self.assertFalse(os.path.exists(target))
+                with self.assertRaises(RuntimeError):          # thiếu mã SHA-256
+                    update.download_verified(dict(found, sha256=None), target)
+            release["tag_name"] = "v0.0.1"
+            routes[f"/repos/{update.REPO}/releases/latest"] = (200, json.dumps(release).encode(), {})
+            self.assertIsNone(update.check())                  # không mới hơn
+            del routes[f"/repos/{update.REPO}/releases/latest"]
+            self.assertIsNone(update.latest_release())         # chưa có bản phát hành
+            update.API = "http://127.0.0.1:1"
+            self.assertIsNone(update.check())                  # mất mạng: không văng lỗi
+            self.assertEqual(update.install(lambda s: None), 1)  # không phải bản exe
+        finally:
+            update.API, update._allowed = original
+
+    def test_tray_summary_and_already_running(self):
+        state = {"status": {}, "devices": [{"is_online": 1, "known": 1}, {"is_online": 0, "known": 0},
+                                           {"is_online": 1, "known": 0}]}
+        base = self.serve({"/api/state": (200, json.dumps(state).encode(), {})})
+        self.assertEqual(tray.fetch_summary(base, None), {"online": 2, "total": 3, "unknown": 2})
+        self.assertEqual(tray.tooltip({"online": 2, "total": 3, "unknown": 2}),
+                         "afing: 2 online / 3 devices, 2 unknown")
+        self.assertEqual(tray.tooltip({"online": 2, "total": 3, "unknown": 0}), "afing: 2 online / 3 devices")
+        self.assertIsNone(tray.fetch_summary("http://127.0.0.1:1", None))
+        self.assertEqual(tray.tooltip(None), "afing: not running")
+        self.assertTrue(cli.already_running(base))
+        self.assertFalse(cli.already_running("http://127.0.0.1:1"))
+        locked = self.serve({"/api/state": (401, b"{}", {"WWW-Authenticate": 'Basic realm="afing"'})})
+        self.assertTrue(cli.already_running(locked))
+        other = self.serve({"/api/state": (200, b'{"hello": 1}', {})})
+        self.assertFalse(cli.already_running(other))           # chương trình khác chiếm cổng
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "afing.cfg")
+            config.ensure(cfg)
+            self.assertEqual(tray.dashboard(cfg), ("http://localhost:8080", None))
+            config.set_values(cfg, "web", {"port": 9000, "password": "pw", "host": "192.168.1.5"})
+            self.assertEqual(tray.dashboard(cfg), ("http://192.168.1.5:9000", "pw"))
 
 
 class OuiTests(unittest.TestCase):

@@ -11,26 +11,52 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write   # chi dung khi day tag: tao ban phat hanh
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Set version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $v = "${{ github.ref_name }}".TrimStart("v")
+            (Get-Content afing\__init__.py -Encoding UTF8) -replace '^__version__ = ".*"$', "__version__ = `"$v`"" | Set-Content afing\__init__.py -Encoding UTF8
+          } else {
+            $v = (Select-String -Path afing\__init__.py -Pattern '^__version__ = "(.*)"$').Matches[0].Groups[1].Value
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "Building afing $v"
+
       - name: Test
         run: python -m unittest discover -s tests
+
       - name: Build
         run: |
-          python -m pip install pyinstaller
+          python -m pip install pyinstaller pystray pillow
           python -m PyInstaller --noconfirm --clean packaging/afing.spec
-      - name: Smoke test the exe
+
+      - name: Smoke test the exes
+        shell: pwsh
         run: |
           dist\afing.exe --version
+          if ($LASTEXITCODE) { exit 1 }
           dist\afing.exe scan
+          if ($LASTEXITCODE) { exit 1 }
+          $p = Start-Process dist\afing-tray.exe -ArgumentList "--self-test" -PassThru
+          if (-not $p.WaitForExit(30000)) { $p.Kill(); Write-Error "tray self-test hung"; exit 1 }
+          if ($p.ExitCode) { Write-Error "tray self-test failed with $($p.ExitCode)"; exit 1 }
+          "tray self-test ok"
+
       - name: Test autostart install on real Windows
         shell: pwsh
         run: |
           New-Item -ItemType Directory "C:\afing test" | Out-Null
-          Copy-Item dist\afing.exe "C:\afing test\afing.exe"
+          Copy-Item dist\afing.exe, dist\afing-tray.exe "C:\afing test\"
           & "C:\afing test\afing.exe" install-autostart --port 8123
           if ($LASTEXITCODE) { exit 1 }
           schtasks /Query /TN afing /V /FO LIST
@@ -41,10 +67,15 @@ jobs:
           }
           Get-Content "C:\afing test\afing.log" -ErrorAction SilentlyContinue
           if (-not $ok) { Write-Error "dashboard did not come up"; exit 1 }
-          "devices: $($s.devices.Count), dhcp listening: $($s.status.dhcp)"
+          "devices: $($s.devices.Count), dhcp listening: $($s.status.dhcp), method: $($s.status.method)"
           if (-not (Test-Path "C:\afing test\afing.db")) { Write-Error "no database next to exe"; exit 1 }
           Get-Content "C:\afing test\afing.cfg" -Encoding UTF8
           if (-not (Select-String -Path "C:\afing test\afing.cfg" -Pattern "^port = 8123$")) { Write-Error "port not saved to afing.cfg"; exit 1 }
+          reg query "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v afing-tray
+          if ($LASTEXITCODE) { Write-Error "tray autostart not registered"; exit 1 }
+          # bam dup khi afing da chay nen: chi mo dashboard, khong bao loi
+          & "C:\afing test\afing.exe" run
+          if ($LASTEXITCODE) { Write-Error "second instance should exit cleanly"; exit 1 }
           # doi cong trong file cau hinh roi cai lai: ban chay nen phai chuyen sang cong moi
           (Get-Content "C:\afing test\afing.cfg" -Encoding UTF8) -replace "^port = 8123$", "port = 8124" | Set-Content "C:\afing test\afing.cfg" -Encoding UTF8
           & "C:\afing test\afing.exe" install-autostart
@@ -55,12 +86,63 @@ jobs:
           }
           if (-not $ok) { Get-Content "C:\afing test\afing.log"; Write-Error "did not move to the port set in afing.cfg"; exit 1 }
           "moved to port 8124 after editing afing.cfg"
+          & "C:\afing test\afing.exe" update
           & "C:\afing test\afing.exe" uninstall-autostart
           if ($LASTEXITCODE) { exit 1 }
           schtasks /Query /TN afing 2>$null
           if ($LASTEXITCODE -eq 0) { Write-Error "task still exists"; exit 1 }
+          reg query "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v afing-tray 2>$null
+          if ($LASTEXITCODE -eq 0) { Write-Error "tray autostart still registered"; exit 1 }
           exit 0
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; if ($LASTEXITCODE) { exit 1 } }
+          & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" packaging\afing.iss
+          if ($LASTEXITCODE) { exit 1 }
+          (Get-FileHash dist\afing.exe -Algorithm SHA256).Hash.ToLower() + "  afing.exe" | Set-Content dist\afing.exe.sha256 -Encoding ascii
+          Get-ChildItem dist
+
+      - name: Test the installer
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\afing-setup.exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); Write-Error "installer hung"; exit 1 }
+          if ($p.ExitCode) { Write-Error "installer failed with $($p.ExitCode)"; exit 1 }
+          $app = "C:\Program Files\afing"
+          Get-ChildItem $app
+          schtasks /Query /TN afing | Out-Null
+          if ($LASTEXITCODE) { Write-Error "installer did not register autostart"; exit 1 }
+          $ok = $false
+          foreach ($i in 1..20) {
+            Start-Sleep 3
+            try { $s = Invoke-RestMethod http://localhost:8080/api/state; $ok = $true; break } catch {}
+          }
+          if (-not $ok) { Get-Content "$app\afing.log" -ErrorAction SilentlyContinue; Write-Error "installed afing did not start"; exit 1 }
+          "installed afing $($s.status.version) is running with $($s.devices.Count) devices"
+          $u = Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -PassThru
+          if (-not $u.WaitForExit(120000)) { $u.Kill(); Write-Error "uninstaller hung"; exit 1 }
+          Start-Sleep 3
+          schtasks /Query /TN afing 2>$null
+          if ($LASTEXITCODE -eq 0) { Write-Error "uninstall left the autostart task"; exit 1 }
+          if (Test-Path "$app\afing.exe") { Write-Error "uninstall left afing.exe"; exit 1 }
+          "uninstall kept user data: $((Get-ChildItem $app -ErrorAction SilentlyContinue).Name -join ', ')"
+          exit 0
+
       - uses: actions/upload-artifact@v4
         with:
           name: afing-windows
-          path: dist/afing.exe
+          path: |
+            dist/afing-setup.exe
+            dist/afing.exe
+            dist/afing-tray.exe
+            dist/afing.exe.sha256
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/afing-setup.exe dist/afing.exe dist/afing-tray.exe dist/afing.exe.sha256 --title "afing ${{ steps.version.outputs.version }}" --generate-notes

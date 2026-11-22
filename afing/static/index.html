@@ -158,6 +158,10 @@
     <div class="stat"><div class="n" id="s-new">–</div><div class="l" data-t="new24"></div></div>
   </div>
   <div class="strip" id="people" hidden></div>
+  <div class="notice" id="update-notice" hidden>
+    <span id="update-text"></span>
+    <a class="btn" id="update-link" target="_blank" rel="noopener"></a>
+  </div>
   <div class="notice" id="unknown-notice" hidden>
     <span id="unknown-text"></span>
     <button class="btn" id="known-all"></button>
@@ -272,6 +276,7 @@ const I18N = {
     justNow: "just now", sec: "{n} sec ago", min: "{n} min ago", hr: "{n} hr ago", day: "{n} day ago", days: "{n} days ago",
     onlineNow: "online now", thisMachine: "this machine", gateway: "gateway", unknownTag: "unknown",
     routerName: "Router / Gateway", deviceOf: "{v} device", unknownDevice: "Unknown device",
+    updateNotice: "afing {v} is available (you have {c}). Install it with: afing.exe update", updateLink: "What's new",
     unknownNotice: "{n} device(s) are not marked as known.", markAll: "Mark all as known",
     home: "home", away: "away",
     muteOn: "🔔 Alerts on", muted: "🔕 Muted until {t}", mute1: "Mute 1 hour", mute8: "Mute 8 hours", mute24: "Mute 24 hours", unmute: "Unmute now",
@@ -311,6 +316,7 @@ const I18N = {
     justNow: "vừa xong", sec: "{n} giây trước", min: "{n} phút trước", hr: "{n} giờ trước", day: "{n} ngày trước", days: "{n} ngày trước",
     onlineNow: "đang trực tuyến", thisMachine: "máy này", gateway: "gateway", unknownTag: "lạ",
     routerName: "Router / Gateway", deviceOf: "Thiết bị {v}", unknownDevice: "Không rõ tên",
+    updateNotice: "Đã có afing {v} (bạn đang dùng {c}). Cài bằng lệnh: afing.exe update", updateLink: "Có gì mới",
     unknownNotice: "Có {n} thiết bị chưa được đánh dấu là quen.", markAll: "Đánh dấu tất cả là quen",
     home: "ở nhà", away: "vắng",
     muteOn: "🔔 Đang bật thông báo", muted: "🔕 Tắt tới {t}", mute1: "Tắt 1 giờ", mute8: "Tắt 8 giờ", mute24: "Tắt 24 giờ", unmute: "Bật lại ngay",
@@ -434,6 +440,13 @@ function render() {
   $("s-offline").textContent = devices.length - online;
   $("s-unknown").textContent = unknown;
   $("s-new").textContent = devices.filter((d) => now - d.first_seen < 86400).length;
+  const upd = status.update;
+  $("update-notice").hidden = !upd;
+  if (upd) {
+    $("update-text").textContent = fmt(L().updateNotice, { v: upd.version, c: status.version });
+    $("update-link").textContent = L().updateLink;
+    $("update-link").href = /^https:\/\/github\.com\//.test(upd.url || "") ? upd.url : "#";
+  }
   $("unknown-notice").hidden = unknown === 0;
   $("unknown-text").textContent = fmt(L().unknownNotice, { n: unknown });
 

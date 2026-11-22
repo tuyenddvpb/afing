@@ -12,6 +12,9 @@ from typing import List, Tuple
 from xml.sax.saxutils import escape
 
 TASK_NAME = "afing"
+TRAY_EXE = "afing-tray.exe"
+TRAY_VALUE = "afing-tray"
+RUN_KEY = r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run"
 
 TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -118,6 +121,14 @@ def install(extra_args: List[str], port: int) -> int:
               + (started.stderr or started.stdout).strip())
     else:
         print(f"Đang chạy nền. Dashboard: http://localhost:{port}")
+    tray = os.path.join(os.path.dirname(command), TRAY_EXE)
+    if getattr(sys, "frozen", False) and os.path.exists(tray):
+        # Biểu tượng khay hệ thống chạy trong phiên của người dùng, mỗi lần đăng nhập.
+        added = subprocess.run(["reg", "add", RUN_KEY, "/v", TRAY_VALUE, "/t", "REG_SZ",
+                                "/d", f'"{tray}"', "/f"], capture_output=True)
+        if added.returncode == 0:
+            subprocess.Popen([tray], close_fds=True)
+            print("Đã bật biểu tượng afing ở khay hệ thống (cạnh đồng hồ).")
     print("Gỡ bỏ bằng lệnh: uninstall-autostart")
     return 0
 
@@ -128,6 +139,8 @@ def uninstall() -> int:
         print("Lỗi: " + problem)
         return 1
     _schtasks("/End", "/TN", TASK_NAME)  # dừng bản đang chạy nền, nếu có
+    subprocess.run(["reg", "delete", RUN_KEY, "/v", TRAY_VALUE, "/f"], capture_output=True)
+    subprocess.run(["taskkill", "/IM", TRAY_EXE, "/F"], capture_output=True)
     deleted = _schtasks("/Delete", "/TN", TASK_NAME, "/F")
     if deleted.returncode:
         print("Lỗi: không gỡ được tác vụ (chưa từng cài?).\n"

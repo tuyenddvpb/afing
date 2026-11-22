@@ -5,6 +5,7 @@ import threading
 import time
 from typing import Dict, Optional
 
+from . import __version__
 from .classify import classify
 from .db import Database
 from .discovery import identify
@@ -65,6 +66,8 @@ class Monitor:
             "dhcp": False,
             "dhcp_packets": 0,
             "notify": [],
+            "version": __version__,
+            "update": None,  # {"version", "url"} khi có bản mới
         }
 
     def on_dhcp(self, info: dict) -> None:

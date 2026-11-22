@@ -33,6 +33,9 @@ enabled = yes
 password =
 # Ngôn ngữ của dashboard và của tin nhắn/báo cáo: en | vi
 language = en
+# Mỗi ngày hỏi GitHub một lần xem có bản afing mới không, và báo trên dashboard (yes/no).
+# afing không tự cài; cài bằng lệnh: afing.exe update
+update_check = yes
 
 [scan]
 # Dải mạng cần quét, ví dụ 192.168.1.0/24. Để trống = tự dò theo mạng máy đang nối.
@@ -88,6 +91,7 @@ telegram_commands = yes
 KINDS: Dict[Tuple[str, str], str] = {
     ("web", "port"): "port", ("web", "host"): "str", ("web", "open_browser"): "bool",
     ("web", "enabled"): "bool", ("web", "password"): "str", ("web", "language"): "choice:en,vi",
+    ("web", "update_check"): "bool",
     ("scan", "subnet"): "str", ("scan", "interval"): "positive", ("scan", "offline_after"): "positive",
     ("scan", "method"): "choice:auto,arp,passive", ("scan", "dhcp"): "bool", ("scan", "oui_download"): "bool",
     ("data", "database"): "str", ("data", "log_file"): "str",
