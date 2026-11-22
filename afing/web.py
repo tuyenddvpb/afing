@@ -6,6 +6,7 @@ import re
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from . import alias
 from .db import Database
 from .monitor import Monitor
 
@@ -41,8 +42,8 @@ def make_server(host: str, port: int, db: Database, monitor: Monitor) -> Threadi
                 self._json({
                     "now": int(time.time()),
                     "status": monitor.status,
-                    "devices": db.devices(),
-                    "events": db.events(50),
+                    "devices": [dict(d, alias_icon=alias.icon(d["alias"])) for d in db.devices()],
+                    "events": [dict(e, alias_icon=alias.icon(e["alias"])) for e in db.events(50)],
                 })
             else:
                 self._json({"error": "not found"}, 404)

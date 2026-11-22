@@ -83,6 +83,11 @@ Giới hạn:
 ## Thông tin thu được
 
 - **IP, MAC**: từ ARP.
+- **Alias**: mỗi thiết bị được tự gán một bí danh là loài vật trong rừng (🐿️ Sóc, 🦉 Cú...) để dễ
+  nhận ra mà không phải tự đặt tên. Bí danh gắn với địa chỉ MAC và lưu trong database, nên thiết
+  bị rời mạng rồi kết nối lại (kể cả với IP khác, kể cả sau khi khởi động lại afing) vẫn giữ đúng
+  con vật cũ. Thiết bị đổi MAC (ví dụ iPhone để địa chỉ Wi-Fi bảo mật kiểu "Xoay vòng") sẽ được
+  coi là thiết bị mới và nhận con vật khác.
 - **Tên và model**, theo thứ tự ưu tiên:
   1. Dịch vụ mDNS/Bonjour mà thiết bị tự quảng bá (Chromecast, Apple TV, iPhone/Mac, Android TV,
      máy in, loa, HomeKit, ESPHome...) - cho tên thân thiện như "TV phòng khách" và model.

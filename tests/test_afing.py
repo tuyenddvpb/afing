@@ -11,7 +11,7 @@ import urllib.request
 import socket
 import time
 
-from afing import dhcp, discovery, names, netinfo, scanner
+from afing import alias, dhcp, discovery, names, netinfo, scanner
 from afing.classify import TYPES, classify
 from afing.monitor import describe
 from afing.db import Database
@@ -442,6 +442,67 @@ class DhcpTests(unittest.TestCase):
             db.close()
 
 
+class AliasTests(unittest.TestCase):
+    def test_pick_is_deterministic_unique_and_never_runs_out(self):
+        mac = "f8:10:93:3b:a5:03"
+        first = alias.pick(mac, [])
+        self.assertEqual(alias.pick(mac, []), first)
+        self.assertIn(first, alias.ICONS)
+        self.assertNotEqual(alias.pick(mac, [first]), first)
+        used = set()
+        for i in range(len(alias.ANIMALS) * 2 + 3):
+            used.add(alias.pick(f"02:00:00:00:{i // 256:02x}:{i % 256:02x}", used))
+        self.assertEqual(len(used), len(alias.ANIMALS) * 2 + 3)
+        self.assertEqual(sum(1 for a in used if a.endswith(" 2")), len(alias.ANIMALS))
+        self.assertEqual(len(alias.ICONS), len(alias.ANIMALS))  # không trùng tên
+
+    def test_icon(self):
+        self.assertEqual(alias.icon("Hổ"), "🐯")
+        self.assertEqual(alias.icon("Hổ 12"), "🐯")
+        self.assertEqual(alias.icon(None), "")
+        self.assertEqual(alias.icon("Khủng long"), "")
+
+    def test_alias_is_kept_across_reconnects_and_restarts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "t.db")
+            db = Database(path)
+            a, b = "f8:10:93:3b:a5:03", "3c:ef:a5:73:55:48"
+            db.apply_scan({"10.0.0.2": a, "10.0.0.3": b}, 1000, 45)
+            before = {d["mac"]: d["alias"] for d in db.devices()}
+            self.assertEqual(len(set(before.values())), 2)
+            db.apply_scan({}, 5000, 45)                       # cả hai rời mạng
+            db.close()
+            db = Database(path)                               # khởi động lại afing
+            db.apply_scan({"10.0.0.9": a, "10.0.0.8": b, "10.0.0.7": "02:00:00:00:00:09"}, 9000, 45)
+            after = {d["mac"]: d["alias"] for d in db.devices()}
+            self.assertEqual({m: after[m] for m in before}, before)
+            self.assertEqual(len(set(after.values())), 3)
+            self.assertEqual(db.events(1)[0]["alias"], after[db.events(1)[0]["mac"]])
+            db.close()
+
+    def test_old_database_gets_aliases(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "old.db")
+            conn = sqlite3.connect(path)
+            conn.execute("CREATE TABLE devices (mac TEXT PRIMARY KEY, ip TEXT NOT NULL, hostname TEXT,"
+                         " custom_name TEXT, vendor TEXT, is_online INTEGER NOT NULL DEFAULT 1,"
+                         " is_self INTEGER NOT NULL DEFAULT 0, is_gateway INTEGER NOT NULL DEFAULT 0,"
+                         " first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL)")
+            conn.executemany("INSERT INTO devices (mac, ip, first_seen, last_seen) VALUES (?,?,1,1)",
+                             [("aa:aa:aa:aa:aa:01", "10.0.0.1"), ("aa:aa:aa:aa:aa:02", "10.0.0.2")])
+            conn.commit()
+            conn.close()
+            db = Database(path)
+            got = [d["alias"] for d in db.devices()]
+            db.close()
+            self.assertEqual(len(set(got)), 2)
+            self.assertTrue(all(alias.icon(a) for a in got))
+            db = Database(path)                               # mở lại: không gán lại
+            self.assertEqual([d["alias"] for d in db.devices()], got)
+            db.close()
+
+
 class OuiTests(unittest.TestCase):
     def test_lookup(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -583,6 +644,9 @@ class WebTests(unittest.TestCase):
         state = json.loads(self.get("/api/state"))
         self.assertEqual(state["status"]["scan_count"], 1)
         self.assertEqual([d["mac"] for d in state["devices"]], [mac])
+        self.assertEqual(state["devices"][0]["alias"], alias.pick(mac, []))
+        self.assertTrue(state["devices"][0]["alias_icon"])
+        self.assertEqual(state["events"][0]["alias"], state["devices"][0]["alias"])
         self.assertEqual(state["events"][0]["type"], "new")
 
         url = f"/api/devices/{mac}/name"

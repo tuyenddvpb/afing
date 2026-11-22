@@ -2,6 +2,8 @@
 
 import sqlite3
 import threading
+
+from . import alias
 from typing import Callable, Dict, List, Optional
 
 SCHEMA = """
@@ -10,6 +12,7 @@ CREATE TABLE IF NOT EXISTS devices (
     ip          TEXT NOT NULL,
     hostname    TEXT,             -- tên tự dò được (DNS/mDNS/NetBIOS)
     custom_name TEXT,             -- tên do người dùng đặt trên web
+    alias       TEXT,             -- bí danh tự gán (loài vật), cố định theo MAC
     vendor      TEXT,
     model       TEXT,             -- model thiết bị tự khai (mDNS/UPnP)
     device_type TEXT,             -- mã loại suy đoán (xem classify.TYPES)
@@ -50,9 +53,20 @@ class Database:
             self._conn.executescript(SCHEMA)
             columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(devices)")}
             for column, kind in (("model", "TEXT"), ("device_type", "TEXT"), ("os", "TEXT"),
-                                 ("name_rank", "INTEGER")):  # DB tạo từ bản cũ
+                                 ("name_rank", "INTEGER"), ("alias", "TEXT")):  # DB tạo từ bản cũ
                 if column not in columns:
                     self._conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {kind}")
+            self._backfill_aliases()
+
+    def _backfill_aliases(self) -> None:
+        """Gán bí danh cho các thiết bị chưa có (DB tạo từ bản cũ), theo thứ tự xuất hiện."""
+        rows = self._conn.execute("SELECT mac, alias FROM devices ORDER BY first_seen, mac").fetchall()
+        used = {r["alias"] for r in rows if r["alias"]}
+        for r in rows:
+            if not r["alias"]:
+                name = alias.pick(r["mac"], used)
+                used.add(name)
+                self._conn.execute("UPDATE devices SET alias=? WHERE mac=?", (name, r["mac"]))
 
     def close(self) -> None:
         with self._lock:
@@ -76,16 +90,19 @@ class Database:
         with self._lock, self._conn:
             c = self._conn
             known = {r["mac"]: r for r in c.execute("SELECT * FROM devices")}
+            aliases = {r["alias"] for r in known.values()}
             by_mac = {mac: ip for ip, mac in seen.items()}  # 1 MAC nhiều IP: giữ 1 IP
             for mac, ip in by_mac.items():
                 vendor = vendor_lookup(mac) if vendor_lookup else None
                 flags = (int(mac == self_mac), int(ip == gateway_ip))
                 old = known.get(mac)
                 if old is None:
+                    name = alias.pick(mac, aliases)
+                    aliases.add(name)
                     c.execute(
-                        "INSERT INTO devices (mac, ip, vendor, is_online, is_self, is_gateway,"
-                        " first_seen, last_seen) VALUES (?,?,?,1,?,?,?,?)",
-                        (mac, ip, vendor, *flags, now, now),
+                        "INSERT INTO devices (mac, ip, vendor, alias, is_online, is_self,"
+                        " is_gateway, first_seen, last_seen) VALUES (?,?,?,?,1,?,?,?,?)",
+                        (mac, ip, vendor, name, *flags, now, now),
                     )
                     emit(mac, "new", ip)
                     continue
@@ -164,7 +181,8 @@ class Database:
     def events(self, limit: int = 50) -> List[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT e.*, COALESCE(d.custom_name, d.hostname) AS name, d.vendor AS vendor"
+                "SELECT e.*, COALESCE(d.custom_name, d.hostname) AS name, d.vendor AS vendor,"
+                " d.alias AS alias"
                 " FROM events e LEFT JOIN devices d ON d.mac = e.mac"
                 " ORDER BY e.id DESC LIMIT ?",
                 (limit,),

@@ -18,7 +18,7 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  .wrap { max-width: 1280px; margin: 0 auto; padding: 20px 16px 40px; }
+  .wrap { max-width: 1680px; margin: 0 auto; padding: 20px 16px 40px; }
   header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 16px; }
   h1 { font-size: 22px; margin: 0; }
   h2 { font-size: 14px; margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line); }
@@ -44,9 +44,11 @@
   .scroll { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; }
   th, td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  td:nth-child(2) { min-width: 170px; }
+  td:nth-child(3) { min-width: 150px; }
+  .alias { font-weight: 650; }
+  .alias .ic { font-size: 18px; margin-right: 6px; vertical-align: -2px; }
   th:first-child, td:first-child { padding-left: 14px; }
-  @media (max-width: 1400px) { th:nth-child(6), td:nth-child(6) { display: none; } }
+  @media (max-width: 1700px) { .grid { grid-template-columns: minmax(0, 1fr); } #events { max-height: 360px; } }
   th { font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; user-select: none; }
   th.sorted::after { content: " ▲"; font-size: 9px; }
   th.sorted.desc::after { content: " ▼"; }
@@ -96,7 +98,7 @@
   <div class="grid">
     <section class="card">
       <div class="toolbar">
-        <input id="search" type="search" placeholder="Tìm theo tên, IP, MAC, hãng, model, loại…" aria-label="Tìm thiết bị">
+        <input id="search" type="search" placeholder="Tìm theo alias, tên, IP, MAC, hãng, loại…" aria-label="Tìm thiết bị">
         <div class="seg" id="filter">
           <button data-f="all" class="active">Tất cả</button>
           <button data-f="online">Trực tuyến</button>
@@ -106,6 +108,7 @@
       <div class="scroll">
         <table>
           <thead><tr>
+            <th data-k="alias">Alias</th>
             <th data-k="device_type">Loại</th>
             <th data-k="name">Thiết bị</th>
             <th data-k="ip" class="sorted">IP</th>
@@ -200,7 +203,7 @@ function render() {
   const q = $("search").value.trim().toLowerCase();
   const shown = devices
     .filter((d) => filter === "all" || (filter === "online") === !!d.is_online)
-    .filter((d) => !q || [displayName(d), d.hostname, d.ip, d.mac, d.vendor, d.model, typeLabel(d), d.os]
+    .filter((d) => !q || [d.alias, displayName(d), d.hostname, d.ip, d.mac, d.vendor, d.model, typeLabel(d), d.os]
       .some((v) => v && v.toLowerCase().includes(q)))
     .sort((a, b) => {
       const x = sortValue(a), y = sortValue(b);
@@ -210,6 +213,9 @@ function render() {
   $("rows").replaceChildren(...shown.map((d) => {
     const tr = el("tr", d.is_online ? "online" : "offline");
     const [icon, label] = TYPES[d.device_type] || ["", ""];
+    const aliasTd = el("td", "alias");
+    aliasTd.append(el("span", "ic", d.alias_icon), d.alias || "—");
+    aliasTd.title = "Bí danh tự gán theo MAC, giữ nguyên ở các lần kết nối sau";
     const typeTd = el("td", null, label ? icon + " " + label : "—");
     if (d.os) typeTd.append(el("span", "sub", d.os));
     const nameTd = el("td");
@@ -226,7 +232,7 @@ function render() {
     last.title = fullTime(d.last_seen);
     const vendorTd = el("td", null, d.vendor || (d.model ? "" : "—"));
     if (d.model) vendorTd.append(el("span", d.vendor ? "sub" : null, d.model));
-    tr.append(typeTd, nameTd, el("td", "mono", d.ip), el("td", "mono", d.mac), vendorTd, first, last);
+    tr.append(aliasTd, typeTd, nameTd, el("td", "mono", d.ip), el("td", "mono", d.mac), vendorTd, first, last);
     return tr;
   }));
   $("empty").hidden = shown.length > 0;
@@ -234,7 +240,8 @@ function render() {
   $("events").replaceChildren(...events.map((e) => {
     const li = el("li", "ev-" + e.type);
     const time = el("span", "ev-time", ago(e.ts, now)); time.title = fullTime(e.ts);
-    const who = e.name || (e.vendor ? "Thiết bị " + e.vendor : e.mac);
+    const what = e.name || (e.vendor ? "Thiết bị " + e.vendor : e.mac);
+    const who = e.alias ? e.alias_icon + " " + e.alias + " · " + what : what;
     li.append(time, el("span", "ev-type", EVENT_LABELS[e.type] || e.type), el("br"),
               who, el("span", "sub mono", e.detail || e.ip || ""));
     return li;

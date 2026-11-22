@@ -127,6 +127,7 @@ def main(argv=None) -> int:
         seen = scanner.scan()
         print(f"Tìm thấy {len(seen)} thiết bị, đang dò tên (khoảng 5 giây)...")
         found = identify(seen.keys(), net.ip)
+        print("(Bí danh loài vật chỉ có ở chế độ chạy liên tục, vì cần database để nhớ.)")
         print(f"{'IP':<16}{'MAC':<19}{'LOẠI':<16}{'TÊN':<28}{'MODEL':<26}{'HĐH':<12}HÃNG")
         for ip in sorted(seen, key=ipaddress.ip_address):
             vendor = oui.lookup(seen[ip])
