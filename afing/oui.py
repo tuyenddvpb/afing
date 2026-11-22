@@ -9,7 +9,8 @@ from typing import Dict, Optional
 log = logging.getLogger("afing.oui")
 
 OUI_URL = "https://standards-oui.ieee.org/oui/oui.csv"
-RANDOM_MAC = "MAC ngẫu nhiên (riêng tư)"
+RANDOM_MAC = "Random MAC (private)"
+LEGACY_RANDOM_MAC = "MAC ngẫu nhiên (riêng tư)"  # nhãn mà các bản cũ đã lưu vào database
 
 
 class OuiTable:

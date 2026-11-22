@@ -4,6 +4,7 @@ import sqlite3
 import threading
 
 from . import alias
+from .oui import LEGACY_RANDOM_MAC, RANDOM_MAC
 from typing import Callable, Dict, List, Optional
 
 SCHEMA = """
@@ -56,7 +57,17 @@ class Database:
                                  ("name_rank", "INTEGER"), ("alias", "TEXT")):  # DB tạo từ bản cũ
                 if column not in columns:
                     self._conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {kind}")
+            self._migrate_labels()
             self._backfill_aliases()
+
+    def _migrate_labels(self) -> None:
+        """Đổi các nhãn tiếng Việt mà bản cũ đã lưu (bí danh, "MAC ngẫu nhiên") sang nhãn hiện tại."""
+        self._conn.execute("UPDATE devices SET vendor=? WHERE vendor=?",
+                           (RANDOM_MAC, LEGACY_RANDOM_MAC))
+        for r in self._conn.execute("SELECT mac, alias FROM devices").fetchall():
+            new = alias.from_legacy(r["alias"])
+            if new:
+                self._conn.execute("UPDATE devices SET alias=? WHERE mac=?", (new, r["mac"]))
 
     def _backfill_aliases(self) -> None:
         """Gán bí danh cho các thiết bị chưa có (DB tạo từ bản cũ), theo thứ tự xuất hiện."""

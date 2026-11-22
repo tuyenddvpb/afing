@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="vi">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>afing – Thiết bị trong mạng</title>
+<title>afing – Network devices</title>
 <style>
   :root {
     --bg: #f4f6f8; --card: #fff; --text: #17202a; --muted: #66727f; --line: #e3e8ed;
@@ -85,66 +85,66 @@
 <div class="wrap">
   <header>
     <h1>afing</h1>
-    <span class="meta" id="netinfo">Đang tải…</span>
-    <span class="live" id="live">đang kết nối…</span>
+    <span class="meta" id="netinfo">Loading…</span>
+    <span class="live" id="live">connecting…</span>
   </header>
   <div class="error" id="error" hidden></div>
   <div class="stats">
-    <div class="stat"><div class="n" id="s-online">–</div><div class="l">Đang trực tuyến</div></div>
-    <div class="stat"><div class="n" id="s-offline">–</div><div class="l">Ngoại tuyến</div></div>
-    <div class="stat"><div class="n" id="s-total">–</div><div class="l">Tổng số đã thấy</div></div>
-    <div class="stat"><div class="n" id="s-new">–</div><div class="l">Mới trong 24 giờ</div></div>
+    <div class="stat"><div class="n" id="s-online">–</div><div class="l">Online</div></div>
+    <div class="stat"><div class="n" id="s-offline">–</div><div class="l">Offline</div></div>
+    <div class="stat"><div class="n" id="s-total">–</div><div class="l">Total seen</div></div>
+    <div class="stat"><div class="n" id="s-new">–</div><div class="l">New in last 24 hours</div></div>
   </div>
   <div class="grid">
     <section class="card">
       <div class="toolbar">
-        <input id="search" type="search" placeholder="Tìm theo alias, tên, IP, MAC, hãng, loại…" aria-label="Tìm thiết bị">
+        <input id="search" type="search" placeholder="Search alias, name, IP, MAC, vendor, type…" aria-label="Search devices">
         <div class="seg" id="filter">
-          <button data-f="all" class="active">Tất cả</button>
-          <button data-f="online">Trực tuyến</button>
-          <button data-f="offline">Ngoại tuyến</button>
+          <button data-f="all" class="active">All</button>
+          <button data-f="online">Online</button>
+          <button data-f="offline">Offline</button>
         </div>
       </div>
       <div class="scroll">
         <table>
           <thead><tr>
             <th data-k="alias">Alias</th>
-            <th data-k="device_type">Loại</th>
-            <th data-k="name">Thiết bị</th>
+            <th data-k="device_type">Type</th>
+            <th data-k="name">Device</th>
             <th data-k="ip" class="sorted">IP</th>
             <th data-k="mac">MAC</th>
-            <th data-k="vendor">Hãng / model</th>
-            <th data-k="first_seen">Thấy lần đầu</th>
-            <th data-k="last_seen">Thấy gần nhất</th>
+            <th data-k="vendor">Vendor / model</th>
+            <th data-k="first_seen">First seen</th>
+            <th data-k="last_seen">Last seen</th>
           </tr></thead>
           <tbody id="rows"></tbody>
         </table>
-        <div class="empty" id="empty" hidden>Chưa có thiết bị nào khớp.</div>
+        <div class="empty" id="empty" hidden>No matching devices.</div>
       </div>
     </section>
     <aside class="card">
-      <h2>Hoạt động gần đây</h2>
+      <h2>Recent activity</h2>
       <ul id="events"></ul>
-      <div class="empty" id="no-events">Chưa có sự kiện.</div>
+      <div class="empty" id="no-events">No events yet.</div>
     </aside>
   </div>
 </div>
 <script>
 const POLL_MS = 3000;
-const EVENT_LABELS = { new: "Thiết bị mới", online: "Kết nối lại", offline: "Rời mạng", ip_change: "Đổi IP" };
+const EVENT_LABELS = { new: "New device", online: "Reconnected", offline: "Left network", ip_change: "IP changed" };
 const TYPES = {
-  router: ["🌐", "Router"], network: ["🔀", "Thiết bị mạng"], computer: ["💻", "Máy tính"],
-  mobile: ["📱", "Điện thoại"], tablet: ["📱", "Máy tính bảng"], tv: ["📺", "Tivi"],
-  media: ["▶️", "Đầu phát media"], speaker: ["🔊", "Loa"], printer: ["🖨️", "Máy in"],
-  camera: ["📷", "Camera"], console: ["🎮", "Máy chơi game"], nas: ["🗄️", "NAS"],
-  appliance: ["🏠", "Đồ gia dụng"], vacuum: ["🧹", "Robot hút bụi"], iot: ["💡", "Thiết bị IoT"],
-  wearable: ["⌚", "Thiết bị đeo"],
+  router: ["🌐", "Router"], network: ["🔀", "Network device"], computer: ["💻", "Computer"],
+  mobile: ["📱", "Phone"], tablet: ["📱", "Tablet"], tv: ["📺", "TV"],
+  media: ["▶️", "Media player"], speaker: ["🔊", "Speaker"], printer: ["🖨️", "Printer"],
+  camera: ["📷", "Camera"], console: ["🎮", "Game console"], nas: ["🗄️", "NAS"],
+  appliance: ["🏠", "Appliance"], vacuum: ["🧹", "Robot vacuum"], iot: ["💡", "IoT device"],
+  wearable: ["⌚", "Wearable"],
 };
 const typeLabel = (d) => (TYPES[d.device_type] || ["", ""])[1];
 const $ = (id) => document.getElementById(id);
 let state = null, filter = "all", sortKey = "ip", sortDesc = false, editing = false;
 
-// Mọi dữ liệu từ mạng (tên máy, hãng...) đều không đáng tin: chỉ chèn qua textContent.
+// Everything learned from the network (hostnames, vendors...) is untrusted: insert via textContent only.
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -153,23 +153,23 @@ function el(tag, cls, text) {
 }
 
 function displayName(d) {
-  // Chưa có tên thì dùng loại đã nhận diện (vd iPhone không gửi tên qua DHCP).
+  // No name yet: fall back to the detected type (e.g. iPhones send no name over DHCP).
   const byType = d.device_type === "mobile" && /^iOS/.test(d.os || "") ? "iPhone"
     : [typeLabel(d), d.os].filter(Boolean).join(" ");
   return d.custom_name || d.hostname || (d.is_gateway ? "Router / Gateway" : "") || byType ||
-         (d.vendor ? "Thiết bị " + d.vendor : "Không rõ tên");
+         (d.vendor ? d.vendor + " device" : "Unknown device");
 }
 
 function ago(ts, now) {
   const s = Math.max(0, now - ts);
-  if (s < 20) return "vừa xong";
-  if (s < 60) return s + " giây trước";
-  if (s < 3600) return Math.floor(s / 60) + " phút trước";
-  if (s < 86400) return Math.floor(s / 3600) + " giờ trước";
-  return Math.floor(s / 86400) + " ngày trước";
+  if (s < 20) return "just now";
+  if (s < 60) return s + " sec ago";
+  if (s < 3600) return Math.floor(s / 60) + " min ago";
+  if (s < 86400) return Math.floor(s / 3600) + " hr ago";
+  return Math.floor(s / 86400) + (s < 172800 ? " day ago" : " days ago");
 }
 
-function fullTime(ts) { return new Date(ts * 1000).toLocaleString("vi-VN"); }
+function fullTime(ts) { return new Date(ts * 1000).toLocaleString(); }
 function ipNum(ip) { return ip.split(".").reduce((n, p) => n * 256 + Number(p), 0); }
 
 function sortValue(d) {
@@ -186,13 +186,13 @@ function render() {
 
   const info = $("netinfo");
   info.replaceChildren(
-    "Mạng ", el("b", null, status.network),
-    " · máy quét ", el("b", null, status.local_ip),
-    " · quét mỗi " + status.interval + " giây (" + status.method + ")",
-    " · DHCP " + (status.dhcp ? "đang nghe (" + status.dhcp_packets + " gói)" : "tắt")
+    "Network ", el("b", null, status.network),
+    " · scanner ", el("b", null, status.local_ip),
+    " · scanning every " + status.interval + " sec (" + status.method + ")",
+    " · DHCP " + (status.dhcp ? "listening (" + status.dhcp_packets + " packets)" : "off")
   );
   $("error").hidden = !status.error;
-  $("error").textContent = status.error ? "Lượt quét gần nhất lỗi: " + status.error : "";
+  $("error").textContent = status.error ? "Last scan failed: " + status.error : "";
 
   const online = devices.filter((d) => d.is_online).length;
   $("s-online").textContent = online;
@@ -215,20 +215,20 @@ function render() {
     const [icon, label] = TYPES[d.device_type] || ["", ""];
     const aliasTd = el("td", "alias");
     aliasTd.append(el("span", "ic", d.alias_icon), d.alias || "—");
-    aliasTd.title = "Bí danh tự gán theo MAC, giữ nguyên ở các lần kết nối sau";
+    aliasTd.title = "Assigned automatically from the MAC address; stays the same every time the device reconnects";
     const typeTd = el("td", null, label ? icon + " " + label : "—");
     if (d.os) typeTd.append(el("span", "sub", d.os));
     const nameTd = el("td");
     nameTd.append(el("span", "dot"));
     const name = el("span", "name", displayName(d));
-    name.title = "Bấm để đặt tên";
+    name.title = "Click to rename";
     name.onclick = () => rename(d);
     nameTd.append(name);
-    if (d.is_self) nameTd.append(el("span", "tag", "máy này"));
+    if (d.is_self) nameTd.append(el("span", "tag", "this machine"));
     if (d.is_gateway) nameTd.append(el("span", "tag", "gateway"));
     if (d.custom_name && d.hostname) nameTd.append(el("span", "sub", d.hostname));
     const first = el("td", null, ago(d.first_seen, now)); first.title = fullTime(d.first_seen);
-    const last = el("td", null, d.is_online ? "đang trực tuyến" : ago(d.last_seen, now));
+    const last = el("td", null, d.is_online ? "online now" : ago(d.last_seen, now));
     last.title = fullTime(d.last_seen);
     const vendorTd = el("td", null, d.vendor || (d.model ? "" : "—"));
     if (d.model) vendorTd.append(el("span", d.vendor ? "sub" : null, d.model));
@@ -240,7 +240,7 @@ function render() {
   $("events").replaceChildren(...events.map((e) => {
     const li = el("li", "ev-" + e.type);
     const time = el("span", "ev-time", ago(e.ts, now)); time.title = fullTime(e.ts);
-    const what = e.name || (e.vendor ? "Thiết bị " + e.vendor : e.mac);
+    const what = e.name || (e.vendor ? e.vendor + " device" : e.mac);
     const who = e.alias ? e.alias_icon + " " + e.alias + " · " + what : what;
     li.append(time, el("span", "ev-type", EVENT_LABELS[e.type] || e.type), el("br"),
               who, el("span", "sub mono", e.detail || e.ip || ""));
@@ -251,7 +251,7 @@ function render() {
 
 async function rename(d) {
   editing = true;
-  const name = prompt("Đặt tên cho " + d.mac + " (" + d.ip + ")\nĐể trống để dùng lại tên tự dò.",
+  const name = prompt("Name for " + d.mac + " (" + d.ip + ")\nLeave empty to use the detected name.",
                       d.custom_name || d.hostname || "");
   editing = false;
   if (name === null) return;
@@ -271,12 +271,12 @@ async function poll() {
     state = await res.json();
     live.classList.remove("down");
     live.textContent = state.status.last_scan
-      ? "quét lần cuối " + ago(state.status.last_scan, state.now)
-      : "đang quét lượt đầu…";
+      ? "last scan " + ago(state.status.last_scan, state.now)
+      : "running first scan…";
     render();
   } catch (err) {
     live.classList.add("down");
-    live.textContent = "mất kết nối tới afing";
+    live.textContent = "lost connection to afing";
   }
 }
 

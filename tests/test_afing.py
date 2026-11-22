@@ -284,7 +284,7 @@ class ClassifyTests(unittest.TestCase):
             (dict(vendor="Intel Corporate", name="DESKTOP-O6P5QG4"), "computer", "Windows"),
             (dict(vendor=None, name="MD5-PC", sources={"nb"}), "computer", "Windows"),
             (dict(vendor="zte corporation", is_gateway=True), "router", None),
-            (dict(vendor="MAC ngẫu nhiên (riêng tư)"), None, None),
+            (dict(vendor=RANDOM_MAC), None, None),
             (dict(vendor="Apple, Inc.", name="Mẹ", model="iPhone8,1"), "mobile", "iOS"),
         ]
         for kwargs, type_, os_ in cases:
@@ -305,7 +305,7 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(classify(vendor="Espressif Inc."), ("iot", None))
         self.assertEqual(classify(vendor="TP-Link Corporation Limited"), ("network", None))
         self.assertEqual(classify(vendor="Samsung Electronics Co.,Ltd"), (None, None))
-        self.assertEqual(classify(name="Galaxy-S21", vendor="MAC ngẫu nhiên (riêng tư)"),
+        self.assertEqual(classify(name="Galaxy-S21", vendor=RANDOM_MAC),
                          ("mobile", "Android"))
         self.assertEqual(classify(upnp_type="InternetGatewayDevice"), ("router", None))
 
@@ -319,7 +319,7 @@ class ClassifyTests(unittest.TestCase):
             describe({"name": "DESKTOP-AB12", "sources": {"nb"}}, "Dell Inc.", False),
             {"name": "DESKTOP-AB12", "name_rank": 1, "model": None, "type": "computer",
              "os": "Windows"})
-        self.assertEqual(describe({}, "MAC ngẫu nhiên (riêng tư)", True)["type"], "router")
+        self.assertEqual(describe({}, RANDOM_MAC, True)["type"], "router")
         self.assertEqual(discovery.parse_upnp_type(
             "<deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>"), "MediaRenderer")
         self.assertIsNone(discovery.parse_upnp_type("<root/>"))
@@ -374,7 +374,7 @@ class DhcpTests(unittest.TestCase):
 
     def test_os_from_dhcp(self):
         def guess(**kw):
-            return classify(vendor="MAC ngẫu nhiên (riêng tư)", dhcp=kw)
+            return classify(vendor=RANDOM_MAC, dhcp=kw)
 
         ios = ",".join(map(str, IOS_PARAMS))
         self.assertEqual(guess(fingerprint=ios), ("mobile", "iOS"))
@@ -457,10 +457,33 @@ class AliasTests(unittest.TestCase):
         self.assertEqual(len(alias.ICONS), len(alias.ANIMALS))  # không trùng tên
 
     def test_icon(self):
-        self.assertEqual(alias.icon("Hổ"), "🐯")
-        self.assertEqual(alias.icon("Hổ 12"), "🐯")
+        self.assertEqual(alias.icon("Tiger"), "🐯")
+        self.assertEqual(alias.icon("Tiger 12"), "🐯")
         self.assertEqual(alias.icon(None), "")
-        self.assertEqual(alias.icon("Khủng long"), "")
+        self.assertEqual(alias.icon("Dinosaur"), "")
+        self.assertEqual(alias.from_legacy("Hổ"), "Tiger")
+        self.assertEqual(alias.from_legacy("Thỏ rừng 3"), "Hare 3")
+        self.assertIsNone(alias.from_legacy("Tiger"))
+        self.assertIsNone(alias.from_legacy(None))
+        self.assertEqual(len(alias.LEGACY), len(alias.ANIMALS))
+
+    def test_vietnamese_labels_from_older_versions_are_migrated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "t.db")
+            db = Database(path)
+            a, b = "da:a1:19:00:00:01", "3c:ef:a5:73:55:48"
+            db.apply_scan({"10.0.0.2": a, "10.0.0.3": b}, 1000, 45)
+            db.set_custom_name(b, "Máy in tầng 2")
+            with db._conn:
+                db._conn.execute("UPDATE devices SET alias='Sóc', vendor='MAC ngẫu nhiên (riêng tư)'"
+                                 " WHERE mac=?", (a,))
+                db._conn.execute("UPDATE devices SET alias='Hổ 2' WHERE mac=?", (b,))
+            db.close()
+            db = Database(path)
+            devs = {d["mac"]: d for d in db.devices()}
+            db.close()
+            self.assertEqual((devs[a]["alias"], devs[a]["vendor"]), ("Squirrel", RANDOM_MAC))
+            self.assertEqual((devs[b]["alias"], devs[b]["custom_name"]), ("Tiger 2", "Máy in tầng 2"))
 
     def test_alias_is_kept_across_reconnects_and_restarts(self):
         with tempfile.TemporaryDirectory() as tmp:

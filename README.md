@@ -83,7 +83,7 @@ Giới hạn:
 ## Thông tin thu được
 
 - **IP, MAC**: từ ARP.
-- **Alias**: mỗi thiết bị được tự gán một bí danh là loài vật trong rừng (🐿️ Sóc, 🦉 Cú...) để dễ
+- **Alias**: mỗi thiết bị được tự gán một bí danh là loài vật trong rừng (🐿️ Squirrel, 🦉 Owl...) để dễ
   nhận ra mà không phải tự đặt tên. Bí danh gắn với địa chỉ MAC và lưu trong database, nên thiết
   bị rời mạng rồi kết nối lại (kể cả với IP khác, kể cả sau khi khởi động lại afing) vẫn giữ đúng
   con vật cũ. Thiết bị đổi MAC (ví dụ iPhone để địa chỉ Wi-Fi bảo mật kiểu "Xoay vòng") sẽ được
