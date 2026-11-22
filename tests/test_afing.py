@@ -11,7 +11,7 @@ import urllib.request
 import socket
 import time
 
-from afing import alias, autostart, dhcp, notify, discovery, names, netinfo, scanner
+from afing import alias, autostart, cli, config, dhcp, notify, discovery, names, netinfo, scanner
 from afing.classify import TYPES, classify
 from afing.monitor import describe
 from afing.db import Database
@@ -736,6 +736,100 @@ class NotifyTests(unittest.TestCase):
         self.assertEqual(notify.disable(self.cfg_path, out.append), 0)
         self.assertEqual(notify.test(self.cfg_path, out.append), 1)
         self.assertEqual(notify.load_config(self.cfg_path), {})
+        self.assertTrue(os.path.exists(self.cfg_path))    # tắt thông báo không xoá file cấu hình
+
+
+class ConfigTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmp.name, "afing.cfg")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write(self, text, encoding="utf-8"):
+        with open(self.path, "w", encoding=encoding) as f:
+            f.write(text)
+
+    def settings(self, *argv, double_clicked=False):
+        return cli.load_settings(["--config", self.path, *argv], double_clicked)
+
+    def test_missing_file_and_template_give_the_same_defaults(self):
+        missing = config.load(self.path).values
+        self.assertTrue(config.ensure(self.path))
+        self.assertFalse(config.ensure(self.path))
+        self.assertEqual(config.load(self.path).values, missing)
+        self.assertEqual(set(missing), set(config.KINDS))        # mẫu khai đủ mọi khoá
+        self.assertEqual((missing["web", "port"], missing["web", "host"], missing["scan", "dhcp"],
+                          missing["scan", "interval"], missing["notify", "leave_after_minutes"]),
+                         (8080, "127.0.0.1", True, 10, 5.0))
+
+    def test_file_values_cli_overrides_and_paths(self):
+        self.write("[web]\nport = 9090\nhost = 0.0.0.0\n[scan]\ninterval = 30\ndhcp = no\n"
+                   "[data]\nlog_file = logs.txt\n", encoding="utf-8-sig")  # có BOM như Notepad
+        args, cfg_path, explicit = self.settings("scan")
+        self.assertEqual((args.port, args.host, args.interval, args.no_dhcp, args.offline_after),
+                         (9090, "0.0.0.0", 30, True, 45))
+        self.assertEqual(args.db, os.path.join(self.tmp.name, "afing.db"))       # cạnh file cfg
+        self.assertEqual(args.log_file, os.path.join(self.tmp.name, "logs.txt"))
+        self.assertEqual((cfg_path, explicit), (self.path, {}))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "afing.cfg.tmp")))
+
+        args, _, explicit = self.settings("scan", "--port", "7000", "--db", "x.db")
+        self.assertEqual((args.port, args.host), (7000, "0.0.0.0"))             # dòng lệnh thắng
+        self.assertEqual(args.db, os.path.abspath("x.db"))
+        self.assertEqual(explicit, {("web", "port"): 7000, ("data", "database"): "x.db"})
+
+    def test_run_creates_the_template_and_double_click_opens_browser(self):
+        args, _, _ = self.settings(double_clicked=True)
+        self.assertTrue(os.path.exists(self.path))
+        self.assertEqual((args.command, args.open_browser, args.port, args.log_file),
+                         ("run", True, 8080, None))
+        self.assertFalse(self.settings()[0].open_browser)
+        config.set_values(self.path, "web", {"open_browser": False, "enabled": False})
+        args, _, _ = self.settings(double_clicked=True)
+        self.assertEqual((args.open_browser, args.no_web), (False, True))
+
+    def test_invalid_values_are_explained(self):
+        for text, expect in [("[web]\nport = abc\n", "[web] port"),
+                             ("[web]\nport = 70000\n", "1-65535"),
+                             ("[scan]\ndhcp = maybe\n", "yes hoặc no"),
+                             ("[scan]\ninterval = 0\n", "lớn hơn 0"),
+                             ("[scan]\nmethod = magic\n", "auto, arp"),
+                             ("port = 1\n", "không đọc được")]:
+            self.write(text)
+            with self.assertRaises(config.ConfigError) as ctx:
+                config.load(self.path)
+            self.assertIn(expect, str(ctx.exception))
+        self.assertEqual(cli.run(["--config", self.path, "scan"]), 1)            # báo lỗi, không văng
+
+    def test_set_values_keeps_comments_and_other_settings(self):
+        config.ensure(self.path)
+        config.set_values(self.path, "web", {"port": 8123})
+        config.set_values(self.path, "notify", {"telegram_token": "123:ABC", "brand_new": "x"})
+        config.set_values(self.path, "extra", {"k": "v"})
+        with open(self.path, encoding="utf-8") as f:
+            text = f.read()
+        expected = config.TEMPLATE.replace("port = 8080", "port = 8123") \
+            .replace("telegram_token =", "telegram_token = 123:ABC") \
+            .replace("leave_after_minutes = 5\n", "leave_after_minutes = 5\nbrand_new = x\n")
+        self.assertEqual(text, expected + "\n[extra]\nk = v")
+        loaded = config.load(self.path)
+        self.assertEqual((loaded["web", "port"], loaded["web", "host"]), (8123, "127.0.0.1"))
+
+    def test_notify_settings_live_in_the_cfg_and_legacy_json_is_imported(self):
+        config.ensure(self.path)
+        legacy = os.path.join(self.tmp.name, "notify.json")
+        with open(legacy, "w") as f:
+            json.dump({"telegram": {"token": "123:ABC", "chat_id": -1009}, "leave_after_minutes": 2}, f)
+        notify.migrate_legacy(legacy, self.path)
+        self.assertFalse(os.path.exists(legacy))
+        self.assertEqual(notify.load_config(self.path), {
+            "telegram": {"token": "123:ABC", "chat_id": -1009}, "leave_after_minutes": 2.0})
+        with open(self.path, encoding="utf-8") as f:
+            self.assertIn("# Cổng của dashboard", f.read())                       # chú thích còn nguyên
+        notify.disable(self.path, lambda s: None)
+        self.assertEqual(notify.load_config(self.path), {"leave_after_minutes": 2.0})
 
 
 class OuiTests(unittest.TestCase):

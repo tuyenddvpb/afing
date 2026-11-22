@@ -11,7 +11,7 @@ import time
 import traceback
 import webbrowser
 
-from . import __version__, autostart, notify
+from . import __version__, autostart, config, notify
 from .db import Database
 from .dhcp import DhcpListener, why_unavailable
 from .classify import TYPES
@@ -30,11 +30,6 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
-def default_db_path() -> str:
-    # Bản .exe lưu dữ liệu cạnh file exe để mở từ shortcut nào cũng dùng chung một database.
-    return os.path.join(os.path.dirname(sys.executable), "afing.db") if is_frozen() else "afing.db"
-
-
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="afing", description="Quét và theo dõi thiết bị trong mạng LAN/Wi-Fi."
@@ -49,17 +44,18 @@ def build_parser() -> argparse.ArgumentParser:
                         " khởi động (cần quyền admin) |"
                         " notify-setup / notify-test / notify-off: cài, thử, tắt thông báo ra"
                         " điện thoại (Telegram hoặc ntfy)")
+    p.add_argument("--config", help="file cấu hình (mặc định afing.cfg cạnh afing.exe, hoặc ở "
+                                    "thư mục hiện tại khi chạy từ mã nguồn)")
     p.add_argument("--subnet", help="subnet cần quét, vd 192.168.1.0/24 (mặc định: tự dò)")
-    p.add_argument("--interval", type=int, default=10, help="số giây giữa 2 lượt quét (10)")
-    p.add_argument("--offline-after", type=int, default=45,
+    p.add_argument("--interval", type=int, help="số giây giữa 2 lượt quét (10)")
+    p.add_argument("--offline-after", type=int,
                    help="không thấy thiết bị quá số giây này thì coi là đã rời mạng (45)")
-    p.add_argument("--method", choices=["auto", "arp", "passive"], default="auto",
+    p.add_argument("--method", choices=["auto", "arp", "passive"],
                    help="arp: ARP scan bằng scapy (cần root) | passive: đọc bảng ARP của HĐH")
-    p.add_argument("--db", default=default_db_path(),
-                   help="đường dẫn file SQLite (mặc định afing.db; bản .exe: cạnh file exe)")
-    p.add_argument("--host", default="127.0.0.1",
+    p.add_argument("--db", help="đường dẫn file SQLite (mặc định afing.db cạnh file cấu hình)")
+    p.add_argument("--host",
                    help="địa chỉ web lắng nghe; dùng 0.0.0.0 để máy khác trong LAN xem được")
-    p.add_argument("--port", type=int, default=8080, help="cổng web (8080)")
+    p.add_argument("--port", type=int, help="cổng web (8080)")
     p.add_argument("--no-web", action="store_true", help="chỉ quét và ghi DB, không mở web")
     p.add_argument("--wait-network", action="store_true",
                    help="chưa có mạng thì chờ và thử lại thay vì thoát (dùng khi tự chạy lúc khởi động)")
@@ -70,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="không nghe gói DHCP (mặc định có nghe nếu đủ quyền mở cổng 67)")
     p.add_argument("--no-oui-download", action="store_true",
                    help="không tự tải bảng hãng sản xuất từ IEEE ở lần chạy đầu")
+    p.epilog = ("Mọi thiết lập trên đều đặt được trong file afing.cfg; tham số dòng lệnh được ưu "
+                "tiên hơn file cấu hình.")
     return p
 
 
@@ -133,10 +131,8 @@ def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     # Bấm đúp vào file exe: chạy luôn chế độ quét liên tục và mở dashboard.
     double_clicked = is_frozen() and not argv
-    if double_clicked:
-        argv = ["run", "--open-browser"]
     try:
-        code = run(argv)
+        code = run(argv, double_clicked)
     except Exception:
         if not double_clicked:
             raise
@@ -147,8 +143,59 @@ def main(argv=None) -> int:
     return code
 
 
-def run(argv) -> int:
+# Tham số dòng lệnh -> (mục, khoá) tương ứng trong afing.cfg.
+CLI_TO_CONFIG = {
+    "port": ("web", "port"), "host": ("web", "host"), "subnet": ("scan", "subnet"),
+    "interval": ("scan", "interval"), "offline_after": ("scan", "offline_after"),
+    "method": ("scan", "method"), "db": ("data", "database"), "log_file": ("data", "log_file"),
+}
+
+
+def load_settings(argv, double_clicked: bool = False):
+    """Đọc tham số dòng lệnh rồi lấp các chỗ trống bằng afing.cfg.
+
+    Trả (args, đường dẫn file cấu hình, {(mục, khoá): giá trị} người dùng gõ trên dòng lệnh).
+    """
     args = build_parser().parse_args(argv)
+    cfg_path = os.path.abspath(args.config or config.default_path())
+    if args.command in ("run", "install-autostart", "notify-setup") and config.ensure(cfg_path):
+        print(f"Đã tạo file cấu hình mẫu: {cfg_path}")
+    settings = config.load(cfg_path)
+
+    explicit = {}
+    for attr, where in CLI_TO_CONFIG.items():
+        value = getattr(args, attr)
+        if value is None:
+            setattr(args, attr, settings[where])
+        else:
+            explicit[where] = value
+    if args.no_web:
+        explicit[("web", "enabled")] = False
+    if args.no_dhcp:
+        explicit[("scan", "dhcp")] = False
+    args.no_web = args.no_web or not settings[("web", "enabled")]
+    args.no_dhcp = args.no_dhcp or not settings[("scan", "dhcp")]
+    args.no_oui_download = args.no_oui_download or not settings[("scan", "oui_download")]
+    args.open_browser = args.open_browser or (double_clicked and settings[("web", "open_browser")])
+    args.subnet = args.subnet or None
+    # Đường dẫn trong file cấu hình tính từ thư mục chứa file; trên dòng lệnh thì từ thư mục hiện tại.
+    for attr, where, fallback in (("db", ("data", "database"), "afing.db"),
+                                  ("log_file", ("data", "log_file"), None)):
+        value = getattr(args, attr)
+        if where in explicit:
+            value = os.path.abspath(value)
+        else:
+            value = settings.resolve(value or fallback) if (value or fallback) else None
+        setattr(args, attr, value)
+    return args, cfg_path, explicit
+
+
+def run(argv, double_clicked: bool = False) -> int:
+    try:
+        args, cfg_path, explicit = load_settings(argv, double_clicked)
+    except config.ConfigError as e:
+        print(f"Lỗi cấu hình - {e}")
+        return 1
     handlers = [logging.StreamHandler()]
     if args.log_file:
         handlers.append(logging.handlers.RotatingFileHandler(
@@ -157,7 +204,8 @@ def run(argv) -> int:
                         datefmt="%Y-%m-%d %H:%M:%S" if args.log_file else "%H:%M:%S",
                         handlers=handlers)
 
-    notify_path = os.path.join(os.path.dirname(os.path.abspath(args.db)), "notify.json")
+    notify_path = cfg_path
+    notify.migrate_legacy(os.path.join(os.path.dirname(args.db), "notify.json"), cfg_path)
     if args.command == "notify-setup":
         return notify.setup(notify_path)
     if args.command == "notify-test":
@@ -167,16 +215,13 @@ def run(argv) -> int:
     if args.command == "uninstall-autostart":
         return autostart.uninstall()
     if args.command == "install-autostart":
-        data_dir = os.path.dirname(os.path.abspath(args.db))
-        extra = ["--db", os.path.abspath(args.db), "--log-file", os.path.join(data_dir, "afing.log"),
-                 "--host", args.host, "--port", str(args.port)]
-        if args.subnet:
-            extra += ["--subnet", args.subnet]
-        if args.interval != 10:
-            extra += ["--interval", str(args.interval)]
-        if args.no_dhcp:
-            extra.append("--no-dhcp")
-        return autostart.install(extra, args.port)
+        # Bản chạy nền chỉ đọc afing.cfg, nên thiết lập gõ kèm lệnh này được ghi vào file đó.
+        if not args.log_file:
+            explicit[("data", "log_file")] = "afing.log"  # chạy nền không có cửa sổ để xem log
+        for (section, key), value in explicit.items():
+            config.set_values(cfg_path, section, {key: value})
+        print(f"Cấu hình của bản chạy nền: {cfg_path}")
+        return autostart.install(["--config", cfg_path], args.port)
 
     oui = OuiTable(os.path.join(os.path.dirname(os.path.abspath(args.db)), "oui.csv"))
 
@@ -204,6 +249,8 @@ def run(argv) -> int:
                 log.info("Chưa có mạng, sẽ thử lại mỗi 10 giây...")
                 waiting = True
             time.sleep(10)
+    if args.command == "run":
+        log.info("Cấu hình: %s", cfg_path)
     log.info("Mạng %s | IP máy này %s | gateway %s | chế độ quét: %s",
              net.network, net.ip, net.gateway or "?", scanner.method)
 
@@ -256,7 +303,7 @@ def run(argv) -> int:
                 server = make_server(args.host, args.port, db, monitor)
             except OSError as e:
                 print(f"Lỗi: không mở được cổng web {args.port} ({e.strerror or e}). "
-                      f"afing đang chạy sẵn? Thử cổng khác bằng --port.")
+                      f"afing đang chạy sẵn? Đổi cổng ở mục [web] trong {cfg_path}.")
                 return 1
             shown = "localhost" if args.host in ("127.0.0.1", "0.0.0.0") else args.host
             url = f"http://{shown}:{args.port}"

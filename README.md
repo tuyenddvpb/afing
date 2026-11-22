@@ -22,7 +22,43 @@ Mở http://localhost:8080. Mặc định afing tự dò subnet của máy, qué
 | `python -m afing mdns` | In mọi thứ nghe được qua mDNS trong 12 giây (để thử) |
 | `python -m afing update-oui` | Tải bảng hãng sản xuất (OUI) mới nhất từ IEEE |
 
-Tuỳ chọn thường dùng (xem đủ bằng `python -m afing --help`):
+## Cấu hình: file `afing.cfg`
+
+Mọi thiết lập nằm trong file `afing.cfg`, sửa bằng Notepad. File được tự tạo với giá trị mặc định
+ở lần chạy đầu, nằm cạnh `afing.exe` (bản đóng gói) hoặc ở thư mục bạn đang đứng (chạy từ mã
+nguồn). Mỗi dòng đều có chú thích; các mục chính:
+
+```ini
+[web]
+port = 8080            ; cổng của dashboard
+host = 127.0.0.1       ; 0.0.0.0 = cho máy khác trong LAN xem
+open_browser = yes     ; tự mở trình duyệt khi bấm đúp afing.exe
+
+[scan]
+subnet =               ; để trống = tự dò
+interval = 10
+offline_after = 45
+dhcp = yes
+
+[data]
+database =             ; để trống = afing.db cạnh file này
+log_file =
+
+[notify]               ; điền bằng lệnh notify-setup
+telegram_token =
+leave_after_minutes = 5
+```
+
+(Trong file thật, chú thích nằm ở dòng riêng bắt đầu bằng `#`; đừng viết chú thích cùng dòng với
+giá trị.)
+
+- Sửa xong thì khởi động lại afing. Với bản tự chạy nền: chạy lại `afing.exe install-autostart`
+  (quyền admin) hoặc khởi động lại máy. Riêng mục `[notify]` được áp dụng ngay.
+- Tham số dòng lệnh, nếu có, được ưu tiên hơn file cấu hình. Dùng file khác bằng `--config`.
+- Giá trị sai (ví dụ `port = abc`) sẽ được báo rõ dòng nào khi khởi động.
+- File chứa token thông báo, đừng chia sẻ nó.
+
+Tham số dòng lệnh tương ứng (xem đủ bằng `python -m afing --help`):
 
 | Tuỳ chọn | Mặc định | Ý nghĩa |
 |---|---|---|
@@ -52,7 +88,7 @@ Dùng trên máy đích:
 
 - Bấm đúp `afing.exe`: tự quét liên tục và mở dashboard trong trình duyệt.
 - Muốn nghe DHCP (lấy tên iPhone...): bấm chuột phải > "Run as administrator".
-- Dữ liệu (`afing.db`, `oui.csv`) nằm cạnh file exe; chép cả thư mục nếu muốn mang theo lịch sử
+- Cấu hình (`afing.cfg`) và dữ liệu (`afing.db`, `oui.csv`) nằm cạnh file exe; chép cả thư mục nếu muốn mang theo lịch sử
   và alias.
 - Các lệnh khác vẫn dùng được từ terminal: `afing.exe scan`, `afing.exe mdns`,
   `afing.exe --host 0.0.0.0`...
@@ -70,8 +106,8 @@ nền mỗi khi máy bật hoặc khởi động lại, không cần ai đăng n
 admin (nghe được DHCP), tự chờ tới khi có mạng và tự chạy lại nếu bị lỗi. Dashboard vẫn ở
 http://localhost:8080; log ghi vào `afing.log` cạnh file exe.
 
-- Muốn máy khác trong LAN xem được dashboard: `afing.exe install-autostart --host 0.0.0.0`
-  (chạy lại lệnh để đổi cấu hình).
+- Bản chạy nền dùng đúng file `afing.cfg` cạnh file exe. Đổi cổng web hay thiết lập khác: sửa
+  `afing.cfg` rồi chạy lại `afing.exe install-autostart`.
 - Tắt tự chạy: `afing.exe uninstall-autostart` (dữ liệu vẫn giữ nguyên).
 - Đừng di chuyển hay đổi tên `afing.exe` sau khi cài; nếu cần thì gỡ, chuyển, rồi cài lại.
 - Khi afing đang chạy nền thì không bấm đúp `afing.exe` nữa (cổng 8080 đã bị dùng); chỉ cần mở
@@ -113,12 +149,12 @@ quét kế tiếp. `notify-test` gửi lại tin thử; `notify-off` tắt và x
 Để không bị làm phiền bởi thiết bị chập chờn (điện thoại ngủ, sóng yếu):
 
 - chỉ báo "rời mạng" khi thiết bị vắng mặt liên tục 5 phút (đổi bằng `"leave_after_minutes"`
-  trong `notify.json`);
+  trong mục `[notify]` của `afing.cfg`);
 - chỉ báo "quay lại" cho thiết bị đã được báo rời mạng;
 - lần quét đầu tiên trên database trống gộp thành một tin tóm tắt.
 
 Lưu ý: nội dung thông báo (tên, IP, MAC thiết bị) đi qua máy chủ của Telegram hoặc ntfy. Cấu hình
-lưu trong `notify.json` cạnh database và chứa token - đừng chia sẻ file này.
+lưu trong mục `[notify]` của `afing.cfg` và chứa token - đừng chia sẻ file này.
 
 ## Nghe DHCP
 

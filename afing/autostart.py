@@ -104,6 +104,7 @@ def install(extra_args: List[str], port: int) -> int:
     try:
         with os.fdopen(fd, "w", encoding="utf-16") as f:
             f.write(build_xml(command, arguments, workdir))
+        _schtasks("/End", "/TN", TASK_NAME)  # cài lại: dừng bản cũ để bản mới nhận cấu hình mới
         created = _schtasks("/Create", "/TN", TASK_NAME, "/XML", xml_path, "/F")
     finally:
         os.unlink(xml_path)

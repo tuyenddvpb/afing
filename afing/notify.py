@@ -4,7 +4,7 @@ Hai kênh, đều chỉ cần máy chạy afing gọi HTTPS ra Internet (không 
 - Telegram: tin nhắn từ một bot do bạn tạo.
 - ntfy:     thông báo đẩy qua app ntfy, không cần tài khoản.
 
-Cấu hình nằm trong file notify.json cạnh database (chứa token - đừng chia sẻ file này).
+Cấu hình nằm trong mục [notify] của afing.cfg (chứa token - đừng chia sẻ file này).
 """
 
 import json
@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 from typing import Callable, Dict, List, Optional, Tuple
 
-from . import alias
+from . import alias, config
 
 log = logging.getLogger("afing.notify")
 
@@ -35,19 +35,51 @@ TYPE_LABELS = {
 # ---------- cấu hình ----------
 
 def load_config(path: str) -> dict:
+    """Đọc mục [notify] của afing.cfg thành dict; chỉ chứa những gì đã được cấu hình."""
     try:
-        with open(path, encoding="utf-8") as f:
-            cfg = json.load(f)
-        return cfg if isinstance(cfg, dict) else {}
-    except (OSError, ValueError):
+        settings = config.load(path)
+    except config.ConfigError as e:
+        log.warning("Bỏ qua cấu hình thông báo: %s", e)
         return {}
+    get = lambda key: settings[("notify", key)]
+    cfg: dict = {}
+    if get("telegram_token") or get("telegram_chat_id"):
+        chat = get("telegram_chat_id")
+        cfg["telegram"] = {"token": get("telegram_token"),
+                           "chat_id": int(chat) if chat.lstrip("-").isdigit() else chat}
+    if get("ntfy_topic"):
+        cfg["ntfy"] = {"topic": get("ntfy_topic")}
+        if get("ntfy_server").rstrip("/") != NTFY_SERVER:
+            cfg["ntfy"]["server"] = get("ntfy_server")
+    if get("leave_after_minutes") != DEFAULT_LEAVE_MINUTES:
+        cfg["leave_after_minutes"] = get("leave_after_minutes")
+    return cfg
 
 
 def save_config(path: str, cfg: dict) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2)
-    os.replace(tmp, path)
+    """Ghi dict cấu hình vào mục [notify] của afing.cfg, giữ nguyên phần còn lại của file."""
+    tg, nt = cfg.get("telegram") or {}, cfg.get("ntfy") or {}
+    config.set_values(path, "notify", {
+        "telegram_token": tg.get("token", ""),
+        "telegram_chat_id": tg.get("chat_id", ""),
+        "ntfy_topic": nt.get("topic", ""),
+        "ntfy_server": nt.get("server") or NTFY_SERVER,
+        "leave_after_minutes": cfg.get("leave_after_minutes", DEFAULT_LEAVE_MINUTES),
+    })
+
+
+def migrate_legacy(json_path: str, cfg_path: str) -> None:
+    """Chuyển cấu hình từ notify.json của bản cũ sang afing.cfg (một lần)."""
+    if not os.path.exists(json_path):
+        return
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            old = json.load(f)
+        if isinstance(old, dict) and channels(old) and not channels(load_config(cfg_path)):
+            save_config(cfg_path, old)
+        os.remove(json_path)
+    except (OSError, ValueError):
+        pass
 
 
 def channels(cfg: dict) -> List[str]:
@@ -239,7 +271,7 @@ def test(config_path: str, out: Callable[[str], None] = print) -> int:
 
 
 def disable(config_path: str, out: Callable[[str], None] = print) -> int:
-    if os.path.exists(config_path):
-        os.remove(config_path)
-    out("Đã tắt thông báo và xoá cấu hình.")
+    keep = load_config(config_path).get("leave_after_minutes", DEFAULT_LEAVE_MINUTES)
+    save_config(config_path, {"leave_after_minutes": keep})
+    out("Đã tắt thông báo và xoá token khỏi file cấu hình.")
     return 0

@@ -8,6 +8,8 @@ oui.csv.tmp
 .venv/
 build/
 dist/
+afing.cfg
+afing.cfg.tmp
 notify.json
 notify.json.tmp
 *.log

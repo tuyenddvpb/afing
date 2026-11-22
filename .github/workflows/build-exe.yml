@@ -31,18 +31,30 @@ jobs:
         run: |
           New-Item -ItemType Directory "C:\afing test" | Out-Null
           Copy-Item dist\afing.exe "C:\afing test\afing.exe"
-          & "C:\afing test\afing.exe" install-autostart
+          & "C:\afing test\afing.exe" install-autostart --port 8123
           if ($LASTEXITCODE) { exit 1 }
           schtasks /Query /TN afing /V /FO LIST
           $ok = $false
           foreach ($i in 1..20) {
             Start-Sleep 3
-            try { $s = Invoke-RestMethod http://localhost:8080/api/state; $ok = $true; break } catch {}
+            try { $s = Invoke-RestMethod http://localhost:8123/api/state; $ok = $true; break } catch {}
           }
           Get-Content "C:\afing test\afing.log" -ErrorAction SilentlyContinue
           if (-not $ok) { Write-Error "dashboard did not come up"; exit 1 }
           "devices: $($s.devices.Count), dhcp listening: $($s.status.dhcp)"
           if (-not (Test-Path "C:\afing test\afing.db")) { Write-Error "no database next to exe"; exit 1 }
+          Get-Content "C:\afing test\afing.cfg" -Encoding UTF8
+          if (-not (Select-String -Path "C:\afing test\afing.cfg" -Pattern "^port = 8123$")) { Write-Error "port not saved to afing.cfg"; exit 1 }
+          # doi cong trong file cau hinh roi cai lai: ban chay nen phai chuyen sang cong moi
+          (Get-Content "C:\afing test\afing.cfg" -Encoding UTF8) -replace "^port = 8123$", "port = 8124" | Set-Content "C:\afing test\afing.cfg" -Encoding UTF8
+          & "C:\afing test\afing.exe" install-autostart
+          $ok = $false
+          foreach ($i in 1..20) {
+            Start-Sleep 3
+            try { Invoke-RestMethod http://localhost:8124/api/state | Out-Null; $ok = $true; break } catch {}
+          }
+          if (-not $ok) { Get-Content "C:\afing test\afing.log"; Write-Error "did not move to the port set in afing.cfg"; exit 1 }
+          "moved to port 8124 after editing afing.cfg"
           & "C:\afing test\afing.exe" uninstall-autostart
           if ($LASTEXITCODE) { exit 1 }
           schtasks /Query /TN afing 2>$null
