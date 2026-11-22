@@ -123,11 +123,6 @@ def listen_dhcp(oui: OuiTable) -> int:
 
 
 def main(argv=None) -> int:
-    for stream in (sys.stdout, sys.stderr):
-        try:  # console Windows dùng bảng mã cũ: thay ký tự không in được thay vì văng lỗi
-            stream.reconfigure(errors="replace")
-        except (AttributeError, ValueError):
-            pass
     argv = sys.argv[1:] if argv is None else list(argv)
     # Bấm đúp vào file exe: chạy luôn chế độ quét liên tục và mở dashboard.
     double_clicked = is_frozen() and not argv
