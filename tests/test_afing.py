@@ -486,6 +486,19 @@ class DatabaseTests(unittest.TestCase):
         self.db.set_identities({a: {"name": "iPhone-moi", "name_rank": 2}})
         self.assertEqual(self.db.devices()[0]["hostname"], "iPhone của Mẹ")
 
+    def test_custom_name_survives_reconnect_with_new_ip(self):
+        a = "f8:10:93:3b:a5:03"
+        self.db.apply_scan({"10.0.0.28": a}, 1000, 45)
+        self.db.set_custom_name(a, "iPhone của Mẹ")
+        self.db.apply_scan({}, 2000, 45)                      # rời mạng
+        self.assertEqual(self.db.devices()[0]["is_online"], 0)
+        self.db.apply_scan({"10.0.0.77": a}, 90000, 45)       # hôm sau vào lại, IP khác
+        self.db.set_identities({a: {"name": "MDs-phone", "name_rank": 2}})
+        devs = self.db.devices()
+        self.assertEqual(len(devs), 1)
+        self.assertEqual((devs[0]["custom_name"], devs[0]["ip"], devs[0]["is_online"],
+                          devs[0]["first_seen"]), ("iPhone của Mẹ", "10.0.0.77", 1, 1000))
+
     def test_same_mac_two_ips(self):
         a = "aa:aa:aa:aa:aa:aa"
         self.db.apply_scan({"10.0.0.1": a, "10.0.0.2": a}, 1000, 45)
