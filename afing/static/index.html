@@ -3,69 +3,88 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>afing – Network devices</title>
+<title>afing</title>
 <style>
   :root {
     --bg: #f4f6f8; --card: #fff; --text: #17202a; --muted: #66727f; --line: #e3e8ed;
     --accent: #0b6bcb; --on: #17a34a; --off: #a4adb7; --warn: #c2410c; --hover: #f0f5fa;
+    --danger: #c62828; --bar: #dfe5eb;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1419; --card: #182028; --text: #e6ebf0; --muted: #8b98a5; --line: #2a343f;
       --accent: #58a6ff; --on: #3fb950; --off: #5b6672; --warn: #f0883e; --hover: #1f2933;
+      --danger: #ff6b6b; --bar: #2a343f;
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   .wrap { max-width: 1680px; margin: 0 auto; padding: 20px 16px 40px; }
-  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 16px; }
   h1 { font-size: 22px; margin: 0; }
   h2 { font-size: 14px; margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 12px; margin: 18px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   .meta { color: var(--muted); font-size: 13px; }
   .meta b { color: var(--text); font-weight: 600; }
-  .live { margin-left: auto; font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .spacer { flex: 1; }
+  .live { font-size: 13px; color: var(--muted); white-space: nowrap; }
   .live::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
                   background: var(--on); margin-right: 6px; animation: pulse 2s infinite; }
   .live.down::before { background: var(--warn); animation: none; }
   @keyframes pulse { 50% { opacity: .3; } }
+  button, select, input, textarea { font: inherit; color: var(--text); }
+  .btn, select.btn { border: 1px solid var(--line); background: var(--card); border-radius: 7px;
+         padding: 6px 11px; cursor: pointer; text-decoration: none; color: var(--text); display: inline-block; }
+  .btn:hover { background: var(--hover); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.danger { color: var(--danger); border-color: var(--danger); }
+  .btn:disabled { opacity: .5; cursor: default; }
   .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
   .stat, .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
   .stat { padding: 12px 14px; }
   .stat .n { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
   .stat .l { color: var(--muted); font-size: 12px; }
+  .strip { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+  .chip { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; }
+  .chip.away { color: var(--muted); }
+  .notice { background: var(--card); border: 1px solid var(--accent); border-radius: 8px;
+            padding: 9px 14px; margin-bottom: 16px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .error { background: var(--card); border: 1px solid var(--warn); color: var(--warn);
+           border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
   .grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
+  @media (max-width: 1700px) { .grid { grid-template-columns: minmax(0, 1fr); } #events { max-height: 360px; } }
   .toolbar { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
   .toolbar input { flex: 1; min-width: 160px; padding: 7px 10px; border: 1px solid var(--line);
-                   border-radius: 7px; background: var(--bg); color: var(--text); font: inherit; }
+                   border-radius: 7px; background: var(--bg); }
   .seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
-  .seg button { border: 0; background: none; color: var(--muted); padding: 7px 12px; font: inherit; cursor: pointer; }
+  .seg button { border: 0; background: none; color: var(--muted); padding: 7px 12px; cursor: pointer; }
   .seg button.active { background: var(--accent); color: #fff; }
   .scroll { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; }
   th, td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  td:nth-child(3) { min-width: 150px; }
-  .alias { font-weight: 650; }
-  .alias .ic { font-size: 18px; margin-right: 6px; vertical-align: -2px; }
   th:first-child, td:first-child { padding-left: 14px; }
-  @media (max-width: 1700px) { .grid { grid-template-columns: minmax(0, 1fr); } #events { max-height: 360px; } }
+  td:nth-child(3) { min-width: 150px; }
   th { font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; user-select: none; }
   th.sorted::after { content: " ▲"; font-size: 9px; }
   th.sorted.desc::after { content: " ▼"; }
+  tbody tr { cursor: pointer; }
   tbody tr:last-child td { border-bottom: 0; }
   tbody tr:hover { background: var(--hover); }
   tr.offline td { color: var(--muted); }
+  .alias { font-weight: 650; }
+  .ic { font-size: 18px; margin-right: 6px; vertical-align: -2px; }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--off); margin-right: 8px; }
-  .online .dot { background: var(--on); }
-  .name { font-weight: 600; cursor: pointer; white-space: normal; }
-  .name:hover { text-decoration: underline dotted; }
+  .online .dot, .dot.on { background: var(--on); }
+  .name { font-weight: 600; white-space: normal; }
   .sub { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
   .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 4px;
          margin-left: 6px; background: var(--hover); color: var(--accent); border: 1px solid var(--line); }
+  .tag.unknown { color: var(--warn); border-color: var(--warn); background: none; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
   .empty { padding: 28px; text-align: center; color: var(--muted); }
   #events { list-style: none; margin: 0; padding: 0; max-height: 640px; overflow-y: auto; }
-  #events li { padding: 9px 14px; border-bottom: 1px solid var(--line); }
+  #events li, .evlist li { padding: 9px 14px; border-bottom: 1px solid var(--line); }
   #events li:last-child { border-bottom: 0; }
   .ev-type { font-weight: 600; }
   .ev-new .ev-type { color: var(--accent); }
@@ -73,138 +92,374 @@
   .ev-offline .ev-type { color: var(--muted); }
   .ev-ip_change .ev-type { color: var(--warn); }
   .ev-time { float: right; color: var(--muted); font-size: 12px; }
-  .error { background: var(--card); border: 1px solid var(--warn); color: var(--warn);
-           border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
-  @media (max-width: 900px) {
-    .grid { grid-template-columns: minmax(0, 1fr); }
+
+  /* Bảng thành thẻ trên màn hình hẹp */
+  @media (max-width: 760px) {
     .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    thead { display: none; }
+    table, tbody, tr, td { display: block; }
+    tbody tr { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+    td { border: 0; padding: 1px 0; white-space: normal; }
+    td:first-child { padding-left: 0; font-size: 16px; }
+    td[data-l]::before { content: attr(data-l) ": "; color: var(--muted); font-size: 12px; }
+    td.hide-sm { display: none; }
   }
+
+  /* Ngăn chi tiết và cài đặt */
+  dialog { border: 0; padding: 0; background: var(--card); color: var(--text); width: min(560px, 100vw);
+           max-width: 100vw; height: 100vh; max-height: 100vh; margin: 0 0 0 auto; box-shadow: -8px 0 30px rgba(0,0,0,.25); }
+  dialog::backdrop { background: rgba(0,0,0,.4); }
+  .dlg-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line);
+              position: sticky; top: 0; background: var(--card); z-index: 1; }
+  .dlg-head .title { font-size: 18px; font-weight: 650; flex: 1; min-width: 0; }
+  .dlg-body { padding: 4px 18px 30px; }
+  .field { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 6px 10px; align-items: center; margin-bottom: 8px; }
+  .field label { color: var(--muted); font-size: 13px; }
+  .field input[type=text], .field select, .field textarea { width: 100%; padding: 6px 9px; border: 1px solid var(--line);
+         border-radius: 6px; background: var(--bg); }
+  .field textarea { min-height: 54px; resize: vertical; }
+  .field .hint { grid-column: 2; font-size: 12px; color: var(--muted); margin-top: -4px; }
+  .kv { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 4px 10px; font-size: 13px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+  .row select { max-width: 100%; min-width: 0; }
+  dialog { overflow-x: hidden; }
+  .msg { font-size: 13px; color: var(--muted); }
+  .msg.ok { color: var(--on); } .msg.bad { color: var(--danger); }
+  .day { display: grid; grid-template-columns: 62px minmax(0, 1fr) 58px; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+  .track { position: relative; height: 12px; background: var(--bar); border-radius: 3px; overflow: hidden; }
+  .track i { position: absolute; top: 0; bottom: 0; background: var(--on); min-width: 1px; }
+  .evlist { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; max-height: 260px; overflow-y: auto; }
+  .evlist li { padding: 6px 10px; font-size: 13px; }
+  pre.log { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px;
+            max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+  @media (max-width: 560px) { .field, .kv { grid-template-columns: minmax(0, 1fr); } .field .hint { grid-column: 1; } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>afing</h1>
-    <span class="meta" id="netinfo">Loading…</span>
-    <span class="live" id="live">connecting…</span>
+    <span class="meta" id="netinfo"></span>
+    <span class="spacer"></span>
+    <span class="live" id="live"></span>
+    <select class="btn" id="mute" aria-label="Alerts"></select>
+    <select class="btn" id="export" aria-label="Export"></select>
+    <button class="btn" id="open-settings" hidden></button>
+    <select class="btn" id="lang" aria-label="Language">
+      <option value="en">English</option><option value="vi">Tiếng Việt</option>
+    </select>
   </header>
   <div class="error" id="error" hidden></div>
   <div class="stats">
-    <div class="stat"><div class="n" id="s-online">–</div><div class="l">Online</div></div>
-    <div class="stat"><div class="n" id="s-offline">–</div><div class="l">Offline</div></div>
-    <div class="stat"><div class="n" id="s-total">–</div><div class="l">Total seen</div></div>
-    <div class="stat"><div class="n" id="s-new">–</div><div class="l">New in last 24 hours</div></div>
+    <div class="stat"><div class="n" id="s-online">–</div><div class="l" data-t="online"></div></div>
+    <div class="stat"><div class="n" id="s-offline">–</div><div class="l" data-t="offline"></div></div>
+    <div class="stat"><div class="n" id="s-unknown">–</div><div class="l" data-t="unknownDevices"></div></div>
+    <div class="stat"><div class="n" id="s-new">–</div><div class="l" data-t="new24"></div></div>
+  </div>
+  <div class="strip" id="people" hidden></div>
+  <div class="notice" id="unknown-notice" hidden>
+    <span id="unknown-text"></span>
+    <button class="btn" id="known-all"></button>
   </div>
   <div class="grid">
     <section class="card">
       <div class="toolbar">
-        <input id="search" type="search" placeholder="Search alias, name, IP, MAC, vendor, type…" aria-label="Search devices">
+        <input id="search" type="search">
         <div class="seg" id="filter">
-          <button data-f="all" class="active">All</button>
-          <button data-f="online">Online</button>
-          <button data-f="offline">Offline</button>
+          <button data-f="all" class="active" data-t="all"></button>
+          <button data-f="online" data-t="online"></button>
+          <button data-f="offline" data-t="offline"></button>
+          <button data-f="unknown" data-t="unknown"></button>
         </div>
       </div>
       <div class="scroll">
         <table>
           <thead><tr>
-            <th data-k="alias">Alias</th>
-            <th data-k="device_type">Type</th>
-            <th data-k="name">Device</th>
+            <th data-k="alias" data-t="alias"></th>
+            <th data-k="device_type" data-t="type"></th>
+            <th data-k="name" data-t="device"></th>
             <th data-k="ip" class="sorted">IP</th>
             <th data-k="mac">MAC</th>
-            <th data-k="vendor">Vendor / model</th>
-            <th data-k="first_seen">First seen</th>
-            <th data-k="last_seen">Last seen</th>
+            <th data-k="vendor" data-t="vendorModel"></th>
+            <th data-k="first_seen" data-t="firstSeen"></th>
+            <th data-k="last_seen" data-t="lastSeen"></th>
           </tr></thead>
           <tbody id="rows"></tbody>
         </table>
-        <div class="empty" id="empty" hidden>No matching devices.</div>
+        <div class="empty" id="empty" hidden data-t="noMatch"></div>
       </div>
     </section>
     <aside class="card">
-      <h2>Recent activity</h2>
+      <h2 data-t="recent"></h2>
       <ul id="events"></ul>
-      <div class="empty" id="no-events">No events yet.</div>
+      <div class="empty" id="no-events" data-t="noEvents"></div>
     </aside>
   </div>
 </div>
+
+<dialog id="detail">
+  <div class="dlg-head">
+    <span class="ic" id="d-icon"></span>
+    <span class="title" id="d-title"></span>
+    <button class="btn" data-close data-t="close"></button>
+  </div>
+  <div class="dlg-body">
+    <p class="meta" id="d-status"></p>
+    <h3 data-t="edit"></h3>
+    <div class="field"><label for="f-name" data-t="name"></label><input type="text" id="f-name" maxlength="80"></div>
+    <div class="field"><label for="f-type" data-t="type"></label><select id="f-type"></select></div>
+    <div class="field"><label for="f-person" data-t="belongsTo"></label><input type="text" id="f-person" maxlength="40" list="people-list">
+      <span class="hint" data-t="belongsHint"></span></div>
+    <div class="field"><label for="f-alert" data-t="alerts"></label><select id="f-alert"></select></div>
+    <div class="field"><label for="f-known" data-t="knownDevice"></label>
+      <span><input type="checkbox" id="f-known"> <label for="f-known" data-t="knownHint"></label></span></div>
+    <div class="field"><label for="f-notes" data-t="notes"></label><textarea id="f-notes" maxlength="500"></textarea></div>
+    <datalist id="people-list"></datalist>
+    <div class="row"><button class="btn primary" id="d-save" data-t="save"></button><span class="msg" id="d-msg"></span></div>
+
+    <h3 data-t="details"></h3>
+    <dl class="kv" id="d-info"></dl>
+
+    <h3 data-t="presence"></h3>
+    <div id="d-timeline"></div>
+
+    <h3 data-t="history"></h3>
+    <ul class="evlist" id="d-events"></ul>
+
+    <h3 data-t="manage"></h3>
+    <p class="msg" data-t="mergeHint"></p>
+    <div class="row"><select class="btn" id="d-merge-into"></select><button class="btn" id="d-merge" data-t="merge"></button></div>
+    <div class="row"><button class="btn danger" id="d-delete" data-t="delete"></button><span class="msg" data-t="deleteHint"></span></div>
+  </div>
+</dialog>
+
+<dialog id="settings">
+  <div class="dlg-head">
+    <span class="title" data-t="settings"></span>
+    <button class="btn" data-close data-t="close"></button>
+  </div>
+  <div class="dlg-body">
+    <p class="msg" id="s-path"></p>
+    <div id="s-form"></div>
+    <div class="row">
+      <button class="btn primary" id="s-save" data-t="save"></button>
+      <button class="btn" id="s-test" data-t="sendTest"></button>
+      <span class="msg" id="s-msg"></span>
+    </div>
+    <p class="msg" data-t="restartHint"></p>
+    <h3 data-t="log"></h3>
+    <div class="row"><button class="btn" id="s-log-load" data-t="showLog"></button></div>
+    <pre class="log" id="s-log" hidden></pre>
+  </div>
+</dialog>
+
 <script>
 const POLL_MS = 3000;
-const EVENT_LABELS = { new: "New device", online: "Reconnected", offline: "Left network", ip_change: "IP changed" };
-const TYPES = {
-  router: ["🌐", "Router"], network: ["🔀", "Network device"], computer: ["💻", "Computer"],
-  mobile: ["📱", "Phone"], tablet: ["📱", "Tablet"], tv: ["📺", "TV"],
-  media: ["▶️", "Media player"], speaker: ["🔊", "Speaker"], printer: ["🖨️", "Printer"],
-  camera: ["📷", "Camera"], console: ["🎮", "Game console"], nas: ["🗄️", "NAS"],
-  appliance: ["🏠", "Appliance"], vacuum: ["🧹", "Robot vacuum"], iot: ["💡", "IoT device"],
-  wearable: ["⌚", "Wearable"],
+const I18N = {
+  en: {
+    title: "Network devices", loading: "Loading…", connecting: "connecting…",
+    online: "Online", offline: "Offline", unknown: "Unknown", unknownDevices: "Unknown devices",
+    new24: "New in last 24 hours", all: "All", alias: "Alias", type: "Type", device: "Device",
+    vendorModel: "Vendor / model", firstSeen: "First seen", lastSeen: "Last seen",
+    search: "Search alias, name, IP, MAC, vendor, type, owner…", noMatch: "No matching devices.",
+    recent: "Recent activity", noEvents: "No events yet.",
+    ev: { new: "New device", online: "Reconnected", offline: "Left network", ip_change: "IP changed" },
+    network: "Network", scanner: "scanner", every: "every {n} sec", dhcpOn: "DHCP listening", dhcpOff: "DHCP off",
+    alertsOn: "alerts: {c}", alertsOff: "alerts off",
+    lastScan: "last scan {t}", firstScan: "running first scan…", lost: "lost connection to afing",
+    scanFailed: "Last scan failed: ",
+    justNow: "just now", sec: "{n} sec ago", min: "{n} min ago", hr: "{n} hr ago", day: "{n} day ago", days: "{n} days ago",
+    onlineNow: "online now", thisMachine: "this machine", gateway: "gateway", unknownTag: "unknown",
+    routerName: "Router / Gateway", deviceOf: "{v} device", unknownDevice: "Unknown device",
+    unknownNotice: "{n} device(s) are not marked as known.", markAll: "Mark all as known",
+    home: "home", away: "away",
+    muteOn: "🔔 Alerts on", muted: "🔕 Muted until {t}", mute1: "Mute 1 hour", mute8: "Mute 8 hours", mute24: "Mute 24 hours", unmute: "Unmute now",
+    export: "⬇ Export", exportDevices: "Devices (CSV)", exportEvents: "History (CSV)",
+    settings: "Settings", close: "Close", save: "Save", saved: "Saved.", failed: "Failed: ",
+    edit: "Edit", name: "Name", belongsTo: "Belongs to", belongsHint: "Person's name; used for “who is home”.",
+    alerts: "Alerts", alertDefault: "Follow the general setting", alertAlways: "Always alert when it leaves or returns", alertNever: "Never alert",
+    knownDevice: "Known device", knownHint: "I recognise this device", notes: "Notes", typeAuto: "Automatic ({t})", typeAutoNone: "Automatic",
+    details: "Details", presence: "Presence, last 14 days", history: "History", manage: "Manage",
+    mergeHint: "If this row is an old address of a device that now appears under another row (for example a phone that changed its MAC), merge it: the other row takes over this row's alias, name and history.",
+    mergeInto: "Merge into…", merge: "Merge", mergeConfirm: "Merge {a} into {b}? {a} will be removed.",
+    delete: "Delete device", deleteHint: "Removes it and its history. If it is still on the network it will come back as a new device.",
+    deleteConfirm: "Delete {a} and its history?",
+    info: { ip: "IP address", mac: "MAC address", vendor: "Vendor", model: "Model", os: "Operating system", hostname: "Detected name",
+            dhcpName: "DHCP name", dhcpClass: "DHCP vendor class", dhcpPrint: "DHCP fingerprint", first: "First seen", last: "Last seen", alias: "Alias" },
+    statusOnline: "Online", statusOffline: "Offline · last seen {t}", today: "Today", noPresence: "No presence recorded in this period.",
+    hours: "{h} h", sendTest: "Send test alert", testOk: "Test sent — check your phone.", testNone: "No alert channel is configured.",
+    restartHint: "Changes to Web, Scan and Data take effect after afing restarts. Alerts and Reports apply immediately.",
+    log: "Log", showLog: "Show log", noLog: "No log file is configured (set log_file under Data).", configFile: "Configuration file: ",
+    sections: { web: "Web", scan: "Scan", data: "Data", notify: "Alerts", report: "Reports" },
+    types: { router: "Router", network: "Network device", computer: "Computer", mobile: "Phone", tablet: "Tablet", tv: "TV",
+             media: "Media player", speaker: "Speaker", printer: "Printer", camera: "Camera", console: "Game console", nas: "NAS",
+             appliance: "Appliance", vacuum: "Robot vacuum", iot: "IoT device", wearable: "Wearable" },
+  },
+  vi: {
+    title: "Thiết bị trong mạng", loading: "Đang tải…", connecting: "đang kết nối…",
+    online: "Trực tuyến", offline: "Ngoại tuyến", unknown: "Lạ", unknownDevices: "Thiết bị lạ",
+    new24: "Mới trong 24 giờ", all: "Tất cả", alias: "Alias", type: "Loại", device: "Thiết bị",
+    vendorModel: "Hãng / model", firstSeen: "Thấy lần đầu", lastSeen: "Thấy gần nhất",
+    search: "Tìm theo alias, tên, IP, MAC, hãng, loại, người dùng…", noMatch: "Không có thiết bị nào khớp.",
+    recent: "Hoạt động gần đây", noEvents: "Chưa có sự kiện.",
+    ev: { new: "Thiết bị mới", online: "Kết nối lại", offline: "Rời mạng", ip_change: "Đổi IP" },
+    network: "Mạng", scanner: "máy quét", every: "mỗi {n} giây", dhcpOn: "đang nghe DHCP", dhcpOff: "không nghe DHCP",
+    alertsOn: "thông báo: {c}", alertsOff: "thông báo tắt",
+    lastScan: "quét lần cuối {t}", firstScan: "đang quét lượt đầu…", lost: "mất kết nối tới afing",
+    scanFailed: "Lượt quét gần nhất lỗi: ",
+    justNow: "vừa xong", sec: "{n} giây trước", min: "{n} phút trước", hr: "{n} giờ trước", day: "{n} ngày trước", days: "{n} ngày trước",
+    onlineNow: "đang trực tuyến", thisMachine: "máy này", gateway: "gateway", unknownTag: "lạ",
+    routerName: "Router / Gateway", deviceOf: "Thiết bị {v}", unknownDevice: "Không rõ tên",
+    unknownNotice: "Có {n} thiết bị chưa được đánh dấu là quen.", markAll: "Đánh dấu tất cả là quen",
+    home: "ở nhà", away: "vắng",
+    muteOn: "🔔 Đang bật thông báo", muted: "🔕 Tắt tới {t}", mute1: "Tắt 1 giờ", mute8: "Tắt 8 giờ", mute24: "Tắt 24 giờ", unmute: "Bật lại ngay",
+    export: "⬇ Xuất file", exportDevices: "Thiết bị (CSV)", exportEvents: "Lịch sử (CSV)",
+    settings: "Cài đặt", close: "Đóng", save: "Lưu", saved: "Đã lưu.", failed: "Lỗi: ",
+    edit: "Chỉnh sửa", name: "Tên", belongsTo: "Của ai", belongsHint: "Tên người dùng; dùng cho mục “ai đang ở nhà”.",
+    alerts: "Thông báo", alertDefault: "Theo thiết lập chung", alertAlways: "Luôn báo khi rời mạng hoặc quay lại", alertNever: "Không bao giờ báo",
+    knownDevice: "Thiết bị quen", knownHint: "Tôi biết thiết bị này", notes: "Ghi chú", typeAuto: "Tự động ({t})", typeAutoNone: "Tự động",
+    details: "Chi tiết", presence: "Thời gian có mặt, 14 ngày qua", history: "Lịch sử", manage: "Quản lý",
+    mergeHint: "Nếu dòng này là địa chỉ cũ của một thiết bị nay đã hiện ở dòng khác (ví dụ điện thoại đổi MAC), hãy gộp: dòng kia sẽ nhận alias, tên và lịch sử của dòng này.",
+    mergeInto: "Gộp vào…", merge: "Gộp", mergeConfirm: "Gộp {a} vào {b}? {a} sẽ bị xoá.",
+    delete: "Xoá thiết bị", deleteHint: "Xoá thiết bị cùng lịch sử. Nếu nó còn trong mạng, nó sẽ hiện lại như thiết bị mới.",
+    deleteConfirm: "Xoá {a} cùng lịch sử của nó?",
+    info: { ip: "Địa chỉ IP", mac: "Địa chỉ MAC", vendor: "Hãng", model: "Model", os: "Hệ điều hành", hostname: "Tên dò được",
+            dhcpName: "Tên qua DHCP", dhcpClass: "DHCP vendor class", dhcpPrint: "Vân tay DHCP", first: "Thấy lần đầu", last: "Thấy gần nhất", alias: "Alias" },
+    statusOnline: "Trực tuyến", statusOffline: "Ngoại tuyến · thấy lần cuối {t}", today: "Hôm nay", noPresence: "Không ghi nhận có mặt trong giai đoạn này.",
+    hours: "{h} giờ", sendTest: "Gửi tin thử", testOk: "Đã gửi tin thử — hãy xem điện thoại.", testNone: "Chưa cấu hình kênh thông báo nào.",
+    restartHint: "Thay đổi ở Web, Quét và Dữ liệu có hiệu lực sau khi khởi động lại afing. Thông báo và Báo cáo áp dụng ngay.",
+    log: "Log", showLog: "Xem log", noLog: "Chưa đặt file log (điền log_file ở mục Dữ liệu).", configFile: "File cấu hình: ",
+    sections: { web: "Web", scan: "Quét", data: "Dữ liệu", notify: "Thông báo", report: "Báo cáo" },
+    types: { router: "Router", network: "Thiết bị mạng", computer: "Máy tính", mobile: "Điện thoại", tablet: "Máy tính bảng", tv: "Tivi",
+             media: "Đầu phát media", speaker: "Loa", printer: "Máy in", camera: "Camera", console: "Máy chơi game", nas: "NAS",
+             appliance: "Đồ gia dụng", vacuum: "Robot hút bụi", iot: "Thiết bị IoT", wearable: "Thiết bị đeo" },
+  },
 };
-const typeLabel = (d) => (TYPES[d.device_type] || ["", ""])[1];
-const $ = (id) => document.getElementById(id);
-let state = null, filter = "all", sortKey = "ip", sortDesc = false, editing = false;
+const TYPE_ICONS = { router: "🌐", network: "🔀", computer: "💻", mobile: "📱", tablet: "📱", tv: "📺", media: "▶️", speaker: "🔊",
+  printer: "🖨️", camera: "📷", console: "🎮", nas: "🗄️", appliance: "🏠", vacuum: "🧹", iot: "💡", wearable: "⌚" };
 
-// Everything learned from the network (hostnames, vendors...) is untrusted: insert via textContent only.
+const $ = (id) => document.getElementById(id);
+let state = null, filter = "all", sortKey = "ip", sortDesc = false;
+let lang = null, openMac = null, configData = null;
+try { lang = localStorage.getItem("afing-lang"); } catch (e) {}
+
+const L = () => I18N[lang] || I18N.en;
+const fmt = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => v[k]);
+
+// Mọi dữ liệu từ mạng (tên máy, hãng...) đều không đáng tin: chỉ chèn qua textContent.
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
   if (text != null) e.textContent = text;
   return e;
 }
-
-function displayName(d) {
-  // No name yet: fall back to the detected type (e.g. iPhones send no name over DHCP).
-  const byType = d.device_type === "mobile" && /^iOS/.test(d.os || "") ? "iPhone"
-    : [typeLabel(d), d.os].filter(Boolean).join(" ");
-  return d.custom_name || d.hostname || (d.is_gateway ? "Router / Gateway" : "") || byType ||
-         (d.vendor ? d.vendor + " device" : "Unknown device");
+function option(value, text, selected) {
+  const o = el("option", null, text);
+  o.value = value; o.selected = !!selected;
+  return o;
 }
 
+function applyLanguage() {
+  document.documentElement.lang = lang;
+  document.title = "afing – " + L().title;
+  for (const e of document.querySelectorAll("[data-t]")) e.textContent = L()[e.dataset.t];
+  $("search").placeholder = L().search;
+  $("search").setAttribute("aria-label", L().search);
+  $("open-settings").textContent = "⚙ " + L().settings;
+  $("known-all").textContent = L().markAll;
+  $("lang").value = lang;
+  $("export").replaceChildren(option("", L().export, true), option("/api/export/devices.csv", L().exportDevices),
+                              option("/api/export/events.csv", L().exportEvents));
+}
+
+const effType = (d) => d.custom_type || d.device_type;
+const typeLabel = (d) => L().types[effType(d)] || "";
+function displayName(d) {
+  // Chưa có tên thì dùng loại đã nhận diện (vd iPhone không gửi tên qua DHCP).
+  const byType = effType(d) === "mobile" && /^iOS/.test(d.os || "") ? "iPhone"
+    : [typeLabel(d), d.os].filter(Boolean).join(" ");
+  return d.custom_name || d.hostname || (d.is_gateway ? L().routerName : "") || byType ||
+         (d.vendor ? fmt(L().deviceOf, { v: d.vendor }) : L().unknownDevice);
+}
 function ago(ts, now) {
   const s = Math.max(0, now - ts);
-  if (s < 20) return "just now";
-  if (s < 60) return s + " sec ago";
-  if (s < 3600) return Math.floor(s / 60) + " min ago";
-  if (s < 86400) return Math.floor(s / 3600) + " hr ago";
-  return Math.floor(s / 86400) + (s < 172800 ? " day ago" : " days ago");
+  if (s < 20) return L().justNow;
+  if (s < 60) return fmt(L().sec, { n: s });
+  if (s < 3600) return fmt(L().min, { n: Math.floor(s / 60) });
+  if (s < 86400) return fmt(L().hr, { n: Math.floor(s / 3600) });
+  const n = Math.floor(s / 86400);
+  return fmt(n > 1 ? L().days : L().day, { n });
 }
-
-function fullTime(ts) { return new Date(ts * 1000).toLocaleString(); }
-function ipNum(ip) { return ip.split(".").reduce((n, p) => n * 256 + Number(p), 0); }
+const fullTime = (ts) => new Date(ts * 1000).toLocaleString(lang === "vi" ? "vi-VN" : undefined);
+const clock = (ts) => new Date(ts * 1000).toLocaleTimeString(lang === "vi" ? "vi-VN" : undefined, { hour: "2-digit", minute: "2-digit" });
+const ipNum = (ip) => ip.split(".").reduce((n, p) => n * 256 + Number(p), 0);
 
 function sortValue(d) {
   if (sortKey === "ip") return ipNum(d.ip);
   if (sortKey === "name") return displayName(d).toLowerCase();
-  if (sortKey === "device_type") return typeLabel(d) || "\uffff";
+  if (sortKey === "device_type") return typeLabel(d) || "￿";
   if (sortKey === "first_seen" || sortKey === "last_seen") return d[sortKey];
   return (d[sortKey] || "").toLowerCase();
 }
 
 function render() {
-  if (!state || editing) return;
+  if (!state) return;
   const { devices, events, status, now } = state;
 
-  const info = $("netinfo");
-  info.replaceChildren(
-    "Network ", el("b", null, status.network),
-    " · scanner ", el("b", null, status.local_ip),
-    " · scanning every " + status.interval + " sec (" + status.method + ")",
-    " · DHCP " + (status.dhcp ? "listening (" + status.dhcp_packets + " packets)" : "off"),
-    " · alerts " + ((status.notify || []).join(", ") || "off")
+  $("netinfo").replaceChildren(
+    L().network + " ", el("b", null, status.network),
+    " · " + L().scanner + " ", el("b", null, status.local_ip),
+    " · " + fmt(L().every, { n: status.interval }) + " (" + status.method + ")",
+    " · " + (status.dhcp ? L().dhcpOn : L().dhcpOff),
+    " · " + ((status.notify || []).length ? fmt(L().alertsOn, { c: status.notify.join(", ") }) : L().alertsOff)
   );
   $("error").hidden = !status.error;
-  $("error").textContent = status.error ? "Last scan failed: " + status.error : "";
+  $("error").textContent = status.error ? L().scanFailed + status.error : "";
+  $("open-settings").hidden = !state.can_admin;
+
+  const muted = state.muted_until > now;
+  const muteKey = lang + (muted ? state.muted_until : 0);
+  if ($("mute").dataset.key !== muteKey) {  // chỉ dựng lại khi đổi trạng thái, kẻo đóng menu đang mở
+    $("mute").dataset.key = muteKey;
+    $("mute").replaceChildren(
+      option("", muted ? fmt(L().muted, { t: clock(state.muted_until) }) : L().muteOn, true),
+      ...(muted ? [option("0", L().unmute)] : []),
+      option("60", L().mute1), option("480", L().mute8), option("1440", L().mute24));
+  }
 
   const online = devices.filter((d) => d.is_online).length;
+  const unknown = devices.filter((d) => !d.known).length;
   $("s-online").textContent = online;
   $("s-offline").textContent = devices.length - online;
-  $("s-total").textContent = devices.length;
+  $("s-unknown").textContent = unknown;
   $("s-new").textContent = devices.filter((d) => now - d.first_seen < 86400).length;
+  $("unknown-notice").hidden = unknown === 0;
+  $("unknown-text").textContent = fmt(L().unknownNotice, { n: unknown });
+
+  // Ai đang ở nhà: gom theo trường "Của ai"
+  const people = new Map();
+  for (const d of devices) {
+    const who = (d.person || "").trim();
+    if (!who) continue;
+    const p = people.get(who.toLowerCase()) || { name: who, home: false, last: 0 };
+    p.home = p.home || !!d.is_online;
+    p.last = Math.max(p.last, d.last_seen);
+    people.set(who.toLowerCase(), p);
+  }
+  const list = [...people.values()].sort((a, b) => a.name.localeCompare(b.name));
+  $("people").hidden = list.length === 0;
+  $("people").replaceChildren(...list.map((p) => {
+    const chip = el("span", "chip" + (p.home ? "" : " away"));
+    chip.append(el("span", "dot" + (p.home ? " on" : "")), p.name + " — " + (p.home ? L().home : L().away + ", " + ago(p.last, now)));
+    return chip;
+  }));
+  $("people-list").replaceChildren(...list.map((p) => option(p.name, p.name)));
 
   const q = $("search").value.trim().toLowerCase();
   const shown = devices
-    .filter((d) => filter === "all" || (filter === "online") === !!d.is_online)
-    .filter((d) => !q || [d.alias, displayName(d), d.hostname, d.ip, d.mac, d.vendor, d.model, typeLabel(d), d.os]
+    .filter((d) => filter === "all" || (filter === "unknown" ? !d.known : (filter === "online") === !!d.is_online))
+    .filter((d) => !q || [d.alias, displayName(d), d.hostname, d.ip, d.mac, d.vendor, d.model, typeLabel(d), d.os, d.person, d.notes]
       .some((v) => v && v.toLowerCase().includes(q)))
     .sort((a, b) => {
       const x = sortValue(a), y = sortValue(b);
@@ -213,27 +468,29 @@ function render() {
 
   $("rows").replaceChildren(...shown.map((d) => {
     const tr = el("tr", d.is_online ? "online" : "offline");
-    const [icon, label] = TYPES[d.device_type] || ["", ""];
+    tr.tabIndex = 0;
+    tr.onclick = () => openDetail(d.mac);
+    tr.onkeydown = (e) => { if (e.key === "Enter") openDetail(d.mac); };
     const aliasTd = el("td", "alias");
     aliasTd.append(el("span", "ic", d.alias_icon), d.alias || "—");
-    aliasTd.title = "Assigned automatically from the MAC address; stays the same every time the device reconnects";
-    const typeTd = el("td", null, label ? icon + " " + label : "—");
+    const label = typeLabel(d);
+    const typeTd = el("td", null, label ? (TYPE_ICONS[effType(d)] || "") + " " + label : "—");
     if (d.os) typeTd.append(el("span", "sub", d.os));
     const nameTd = el("td");
-    nameTd.append(el("span", "dot"));
-    const name = el("span", "name", displayName(d));
-    name.title = "Click to rename";
-    name.onclick = () => rename(d);
-    nameTd.append(name);
-    if (d.is_self) nameTd.append(el("span", "tag", "this machine"));
-    if (d.is_gateway) nameTd.append(el("span", "tag", "gateway"));
-    if (d.custom_name && d.hostname) nameTd.append(el("span", "sub", d.hostname));
-    const first = el("td", null, ago(d.first_seen, now)); first.title = fullTime(d.first_seen);
-    const last = el("td", null, d.is_online ? "online now" : ago(d.last_seen, now));
-    last.title = fullTime(d.last_seen);
-    const vendorTd = el("td", null, d.vendor || (d.model ? "" : "—"));
+    nameTd.append(el("span", "dot"), el("span", "name", displayName(d)));
+    if (d.is_self) nameTd.append(el("span", "tag", L().thisMachine));
+    if (d.is_gateway) nameTd.append(el("span", "tag", L().gateway));
+    if (!d.known) nameTd.append(el("span", "tag unknown", L().unknownTag));
+    const sub = [d.custom_name && d.hostname ? d.hostname : "", d.person ? "👤 " + d.person : ""].filter(Boolean).join(" · ");
+    if (sub) nameTd.append(el("span", "sub", sub));
+    const ipTd = el("td", "mono", d.ip); ipTd.dataset.l = "IP";
+    const macTd = el("td", "mono", d.mac); macTd.dataset.l = "MAC";
+    const vendorTd = el("td", null, d.vendor || (d.model ? "" : "—")); vendorTd.dataset.l = L().vendorModel;
     if (d.model) vendorTd.append(el("span", d.vendor ? "sub" : null, d.model));
-    tr.append(aliasTd, typeTd, nameTd, el("td", "mono", d.ip), el("td", "mono", d.mac), vendorTd, first, last);
+    const first = el("td", "hide-sm", ago(d.first_seen, now)); first.title = fullTime(d.first_seen);
+    const last = el("td", null, d.is_online ? L().onlineNow : ago(d.last_seen, now));
+    last.title = fullTime(d.last_seen); last.dataset.l = L().lastSeen;
+    tr.append(aliasTd, typeTd, nameTd, ipTd, macTd, vendorTd, first, last);
     return tr;
   }));
   $("empty").hidden = shown.length > 0;
@@ -241,46 +498,199 @@ function render() {
   $("events").replaceChildren(...events.map((e) => {
     const li = el("li", "ev-" + e.type);
     const time = el("span", "ev-time", ago(e.ts, now)); time.title = fullTime(e.ts);
-    const what = e.name || (e.vendor ? e.vendor + " device" : e.mac);
+    const what = e.name || (e.vendor ? fmt(L().deviceOf, { v: e.vendor }) : e.mac);
     const who = e.alias ? e.alias_icon + " " + e.alias + " · " + what : what;
-    li.append(time, el("span", "ev-type", EVENT_LABELS[e.type] || e.type), el("br"),
-              who, el("span", "sub mono", e.detail || e.ip || ""));
+    li.append(time, el("span", "ev-type", L().ev[e.type] || e.type), el("br"), who, el("span", "sub mono", e.detail || e.ip || ""));
     return li;
   }));
   $("no-events").hidden = events.length > 0;
 }
 
-async function rename(d) {
-  editing = true;
-  const name = prompt("Name for " + d.mac + " (" + d.ip + ")\nLeave empty to use the detected name.",
-                      d.custom_name || d.hostname || "");
-  editing = false;
-  if (name === null) return;
-  await fetch("/api/devices/" + d.mac + "/name", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-  poll();
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? { cache: "no-store" } :
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  let data = {};
+  try { data = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error(data.error || res.status);
+  return data;
 }
 
 async function poll() {
   const live = $("live");
   try {
-    const res = await fetch("/api/state", { cache: "no-store" });
-    if (!res.ok) throw new Error(res.status);
-    state = await res.json();
+    state = await api("/api/state");
+    if (!lang) { lang = state.language || "en"; applyLanguage(); }
     live.classList.remove("down");
-    live.textContent = state.status.last_scan
-      ? "last scan " + ago(state.status.last_scan, state.now)
-      : "running first scan…";
+    live.textContent = state.status.last_scan ? fmt(L().lastScan, { t: ago(state.status.last_scan, state.now) }) : L().firstScan;
     render();
   } catch (err) {
     live.classList.add("down");
-    live.textContent = "lost connection to afing";
+    live.textContent = L().lost;
   }
 }
 
+// ---------- chi tiết thiết bị ----------
+
+function setMsg(node, text, kind) { node.textContent = text; node.className = "msg" + (kind ? " " + kind : ""); }
+
+async function openDetail(mac) {
+  openMac = mac;
+  const d = state.devices.find((x) => x.mac === mac);
+  if (!d) return;
+  $("f-name").value = d.custom_name || "";
+  $("f-name").placeholder = d.hostname || "";
+  $("f-person").value = d.person || "";
+  $("f-notes").value = d.notes || "";
+  $("f-known").checked = !!d.known;
+  const auto = L().types[d.device_type];
+  $("f-type").replaceChildren(option("", auto ? fmt(L().typeAuto, { t: auto }) : L().typeAutoNone, !d.custom_type),
+    ...Object.keys(L().types).map((k) => option(k, (TYPE_ICONS[k] || "") + " " + L().types[k], d.custom_type === k)));
+  $("f-alert").replaceChildren(option("", L().alertDefault, !d.alert), option("always", L().alertAlways, d.alert === "always"),
+    option("never", L().alertNever, d.alert === "never"));
+  $("d-merge-into").replaceChildren(option("", L().mergeInto, true), ...state.devices.filter((x) => x.mac !== mac)
+    .sort((a, b) => (b.is_online - a.is_online) || ipNum(a.ip) - ipNum(b.ip))
+    .map((x) => option(x.mac, (x.is_online ? "🟢 " : "⚪ ") + (x.alias || "") + " — " + displayName(x) + " (" + x.mac + ")")));
+  setMsg($("d-msg"), "");
+  fillDetailHeader(d, state.now);
+  $("d-info").replaceChildren(); $("d-timeline").replaceChildren(); $("d-events").replaceChildren();
+  if (!$("detail").open) $("detail").showModal();
+  try { renderDetail(await api("/api/devices/" + mac)); } catch (e) {}
+}
+
+function fillDetailHeader(d, now) {
+  $("d-icon").textContent = d.alias_icon || "";
+  $("d-title").textContent = (d.alias ? d.alias + " — " : "") + displayName(d);
+  $("d-status").replaceChildren(el("span", "dot" + (d.is_online ? " on" : "")),
+    d.is_online ? L().statusOnline : fmt(L().statusOffline, { t: ago(d.last_seen, now) }));
+}
+
+function renderDetail(data) {
+  const d = data.device, I = L().info, dh = data.dhcp || {};
+  if (d.mac !== openMac) return;
+  const rows = [[I.alias, (d.alias_icon || "") + " " + (d.alias || "")], [I.ip, d.ip], [I.mac, d.mac], [I.vendor, d.vendor], [I.model, d.model],
+    [I.os, d.os], [I.hostname, d.hostname], [I.dhcpName, dh.hostname], [I.dhcpClass, dh.vendor_class], [I.dhcpPrint, dh.fingerprint],
+    [I.first, fullTime(d.first_seen)], [I.last, fullTime(d.last_seen)]].filter((r) => r[1]);
+  $("d-info").replaceChildren(...rows.flatMap(([k, v]) => [el("dt", null, k), el("dd", /MAC|IP|DHCP/.test(k) ? "mono" : null, v)]));
+
+  // Dải thời gian có mặt: mỗi ngày một hàng, từ 0h tới 24h
+  const days = [];
+  const midnight = new Date(data.now * 1000); midnight.setHours(0, 0, 0, 0);
+  for (let i = 0; i < 14; i++) {
+    const start = midnight.getTime() / 1000 - i * 86400, end = start + 86400;
+    if (end <= data.history_since) break;
+    const row = el("div", "day"), track = el("div", "track");
+    let total = 0;
+    for (const [a, b] of data.sessions) {
+      const s = Math.max(a, start), e = Math.min(b, end);
+      if (e <= s) continue;
+      total += e - s;
+      const bar = el("i");
+      bar.style.left = ((s - start) / 864) + "%"; bar.style.width = ((e - s) / 864) + "%";
+      bar.title = clock(s) + " – " + clock(e);
+      track.append(bar);
+    }
+    const label = i === 0 ? L().today : new Date(start * 1000).toLocaleDateString(lang === "vi" ? "vi-VN" : undefined, { day: "2-digit", month: "2-digit" });
+    row.append(el("span", null, label), track, el("span", null, total ? fmt(L().hours, { h: (total / 3600).toFixed(1) }) : "—"));
+    days.push(row);
+  }
+  $("d-timeline").replaceChildren(...(data.sessions.length ? days : [el("p", "msg", L().noPresence)]));
+
+  $("d-events").replaceChildren(...data.events.map((e) => {
+    const li = el("li", "ev-" + e.type);
+    const t = el("span", "ev-time", fullTime(e.ts));
+    li.append(t, el("span", "ev-type", L().ev[e.type] || e.type), " ", el("span", "mono", e.detail || e.ip || ""));
+    return li;
+  }));
+}
+
+$("d-save").onclick = async () => {
+  try {
+    await api("/api/devices/" + openMac, { custom_name: $("f-name").value, custom_type: $("f-type").value, person: $("f-person").value,
+      notes: $("f-notes").value, known: $("f-known").checked, alert: $("f-alert").value });
+    setMsg($("d-msg"), L().saved, "ok");
+    await poll();
+    const d = state.devices.find((x) => x.mac === openMac);
+    if (d) fillDetailHeader(d, state.now);
+  } catch (e) { setMsg($("d-msg"), L().failed + e.message, "bad"); }
+};
+$("d-delete").onclick = async () => {
+  const d = state.devices.find((x) => x.mac === openMac);
+  if (!d || !confirm(fmt(L().deleteConfirm, { a: (d.alias || "") + " " + d.mac }))) return;
+  try { await api("/api/devices/" + openMac + "/delete", {}); $("detail").close(); poll(); }
+  catch (e) { setMsg($("d-msg"), L().failed + e.message, "bad"); }
+};
+$("d-merge").onclick = async () => {
+  const into = $("d-merge-into").value;
+  const a = state.devices.find((x) => x.mac === openMac), b = state.devices.find((x) => x.mac === into);
+  if (!a || !b || !confirm(fmt(L().mergeConfirm, { a: (a.alias || "") + " (" + a.mac + ")", b: (b.alias || "") + " (" + b.mac + ")" }))) return;
+  try { await api("/api/devices/" + openMac + "/merge", { into }); await poll(); openDetail(into); }
+  catch (e) { setMsg($("d-msg"), L().failed + e.message, "bad"); }
+};
+
+// ---------- cài đặt ----------
+
+async function openSettings() {
+  setMsg($("s-msg"), ""); $("s-log").hidden = true;
+  try { configData = await api("/api/config"); } catch (e) { return; }
+  $("s-path").textContent = L().configFile + configData.path + (configData.error ? " — " + configData.error : "");
+  const form = $("s-form"); form.replaceChildren();
+  for (const [section, keys] of Object.entries(configData.values || {})) {
+    form.append(el("h3", null, L().sections[section] || section));
+    for (const [key, value] of Object.entries(keys)) {
+      const kind = configData.kinds[section + "." + key] || "str", id = "c-" + section + "-" + key;
+      const field = el("div", "field"), label = el("label", null, key);
+      label.htmlFor = id;
+      let input;
+      if (kind === "bool" || kind.startsWith("choice:")) {
+        input = el("select");
+        for (const o of kind === "bool" ? ["yes", "no"] : kind.slice(7).split(",")) input.append(option(o, o, o === value));
+      } else {
+        input = el("input"); input.type = "text"; input.value = value;
+      }
+      input.id = id; input.dataset.section = section; input.dataset.key = key; input.dataset.orig = value;
+      field.append(label, input);
+      form.append(field);
+    }
+  }
+  if (!$("settings").open) $("settings").showModal();
+}
+$("s-save").onclick = async () => {
+  const changed = [...$("s-form").querySelectorAll("[data-key]")].filter((i) => i.value !== i.dataset.orig);
+  try {
+    for (const i of changed) {
+      await api("/api/config", { section: i.dataset.section, key: i.dataset.key, value: i.value });
+      i.dataset.orig = i.value;
+    }
+    setMsg($("s-msg"), L().saved, "ok");
+    const chosen = $("c-web-language");
+    if (chosen && changed.includes(chosen)) { lang = chosen.value; try { localStorage.setItem("afing-lang", lang); } catch (e) {} applyLanguage(); openSettings(); }
+    poll();
+  } catch (e) { setMsg($("s-msg"), L().failed + e.message, "bad"); }
+};
+$("s-test").onclick = async () => {
+  try {
+    const r = await api("/api/notify-test", {});
+    if (r.ok) setMsg($("s-msg"), L().testOk, "ok");
+    else setMsg($("s-msg"), r.results ? L().failed + r.results.filter((x) => x.error).map((x) => x.channel + ": " + x.error).join("; ") : L().testNone, "bad");
+  } catch (e) { setMsg($("s-msg"), L().failed + e.message, "bad"); }
+};
+$("s-log-load").onclick = async () => {
+  try {
+    const r = await api("/api/log");
+    $("s-log").hidden = false;
+    $("s-log").textContent = r.lines.length ? r.lines.join("\n") : L().noLog;
+    $("s-log").scrollTop = $("s-log").scrollHeight;
+  } catch (e) {}
+};
+
+// ---------- sự kiện giao diện ----------
+
+$("open-settings").onclick = openSettings;
+for (const b of document.querySelectorAll("[data-close]")) b.onclick = () => b.closest("dialog").close();
+for (const dlg of document.querySelectorAll("dialog")) {
+  dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });  // bấm ra ngoài để đóng
+}
+$("detail").addEventListener("close", () => { openMac = null; });
 $("search").addEventListener("input", render);
 $("filter").addEventListener("click", (e) => {
   if (!e.target.dataset.f) return;
@@ -299,9 +709,23 @@ document.querySelector("thead").addEventListener("click", (e) => {
   }
   render();
 });
+$("lang").onchange = () => {
+  lang = $("lang").value;
+  try { localStorage.setItem("afing-lang", lang); } catch (e) {}
+  applyLanguage(); render();
+};
+$("export").onchange = () => { if ($("export").value) location.href = $("export").value; $("export").value = ""; };
+$("mute").onchange = async () => {
+  const v = $("mute").value;
+  if (v !== "") { try { await api("/api/mute", { minutes: Number(v) }); } catch (e) {} }
+  poll();
+};
+$("known-all").onclick = async () => { try { await api("/api/devices/known-all", {}); } catch (e) {} poll(); };
 
+if (lang) applyLanguage(); else { lang = "en"; applyLanguage(); lang = null; }
+$("live").textContent = I18N.en.connecting;
 poll();
-setInterval(poll, POLL_MS);
+setInterval(() => { if (!document.hidden) poll(); }, POLL_MS);
 </script>
 </body>
 </html>
