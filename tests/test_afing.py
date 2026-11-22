@@ -855,7 +855,8 @@ class ReportTests(unittest.TestCase):
                                 self.phone: {"name": "MDs-phone", "type": "mobile"}})
         self.sent = []
         self.reporter = report.Reporter(self.cfg, self.db.devices, "10.0.0.0/24",
-                                        sender=lambda cfg, text: self.sent.append(text) or [])
+                                        sender=lambda cfg, text: self.sent.append(text) or [],
+                                        online_since=self.db.online_since)
         self._api = notify.TELEGRAM_API
 
     def tearDown(self):
@@ -869,25 +870,37 @@ class ReportTests(unittest.TestCase):
 
     def test_report_text(self):
         text = self.reporter.text(now=self.NOW)
-        stamp = time.strftime("%d %b %H:%M", time.localtime(self.NOW))
+        stamp = report.clock(self.NOW)
+        seen = report.clock(self.NOW - 7200)
         self.assertEqual(text.split("\n"), [
             "📊 afing report · 10.0.0.0/24",
             f"{stamp} · 1 online · 2 offline",
             "",
             "🟢 ONLINE (1)",
-            f"{self.alias_of(self.tv)} — [TV] Samsung · TV · 10.0.0.4",
+            f"{self.alias_of(self.tv)} — [TV] Samsung · TV",
+            f"    10.0.0.4 · {self.tv}",
+            f"    online 2 hr (since {seen})",
             "",
             "⚪ OFFLINE (2)",
-            f"{self.alias_of(self.phone)} — MDs-phone · Phone · last seen 2 hr ago",
+            f"{self.alias_of(self.phone)} — MDs-phone · Phone",
+            f"    10.0.0.28 · {self.phone}",
+            f"    last seen {seen} (2 hr ago)",
             "(+1 not seen for over 7 days)",
         ])
         online = self.reporter.text("online", self.NOW)
         self.assertIn("🟢 ONLINE (1)", online)
         self.assertNotIn("OFFLINE (", online)
         config.set_values(self.cfg, "report", {"offline_days": 0})
-        self.assertIn("last seen 30 days ago", self.reporter.text("offline", self.NOW))
+        self.assertIn("(30 days ago)", self.reporter.text("offline", self.NOW + 900))
         self.assertEqual([report.ago(s) for s in (5, 600, 7300, 86400, 200000)],
                          ["just now", "10 min ago", "2 hr ago", "1 day ago", "2 days ago"])
+        # rời mạng rồi quay lại: thời gian online tính từ lần quay lại, không phải lần đầu thấy
+        self.db.apply_scan({"10.0.0.4": self.tv, "10.0.0.28": self.phone}, self.NOW + 600, 45)
+        back = self.reporter.text("online", self.NOW + 900)
+        self.assertIn(f"    10.0.0.28 · {self.phone}\n    online 5 min (since "
+                      f"{report.clock(self.NOW + 600)})", back)
+        self.assertEqual([report.duration(s) for s in (30, 300, 3600, 8000, 86400, 190000)],
+                         ["under 1 min", "5 min", "1 hr", "2 hr 13 min", "1 day", "2 days 4 hr"])
 
     def test_split_message(self):
         text = "\n".join(f"line {i}" for i in range(400))

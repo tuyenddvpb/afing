@@ -195,6 +195,14 @@ class Database:
             rows = self._conn.execute("SELECT * FROM devices").fetchall()
         return [dict(r) for r in rows]
 
+    def online_since(self) -> Dict[str, int]:
+        """{mac: thời điểm bắt đầu lần online gần nhất} - từ sự kiện "new"/"online" mới nhất."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT mac, MAX(ts) AS ts FROM events WHERE type IN ('new', 'online') GROUP BY mac"
+            ).fetchall()
+        return {r["mac"]: r["ts"] for r in rows}
+
     def events(self, limit: int = 50) -> List[dict]:
         with self._lock:
             rows = self._conn.execute(

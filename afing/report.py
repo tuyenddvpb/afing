@@ -47,31 +47,61 @@ def ago(seconds: float) -> str:
     return f"{days} day{'s' if days > 1 else ''} ago"
 
 
-def _line(dev: dict, tail: str) -> str:
+def duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return "under 1 min"
+    if seconds < 3600:
+        return f"{seconds // 60} min"
+    if seconds < 86400:
+        hours, minutes = seconds // 3600, seconds % 3600 // 60
+        return f"{hours} hr {minutes} min" if minutes else f"{hours} hr"
+    days, hours = seconds // 86400, seconds % 86400 // 3600
+    text = f"{days} day{'s' if days > 1 else ''}"
+    return f"{text} {hours} hr" if hours else text
+
+
+def clock(ts: float) -> str:
+    return time.strftime("%d %b %H:%M", time.localtime(ts))
+
+
+def _line(dev: dict, when: str) -> str:
+    """Hai dòng cho một thiết bị: tên/loại, rồi IP · MAC · thời gian."""
     head = " ".join(filter(None, (alias.icon(dev.get("alias")), dev.get("alias"))))
     name = dev.get("custom_name") or dev.get("hostname")
     if name:
         head = f"{head} — {name}" if head else name
-    return " · ".join(filter(None, (head, notify.TYPE_LABELS.get(dev.get("device_type")), tail)))
+    head = " · ".join(filter(None, (head, notify.TYPE_LABELS.get(dev.get("device_type")))))
+    return f"{head}\n    {dev['ip']} · {dev['mac']}\n    {when}"
 
 
 def build(devices: List[dict], now: float, network: str = "", which: str = "all",
-          offline_days: float = 7) -> str:
-    """Soạn báo cáo dạng văn bản. `which`: all | online | offline."""
+          offline_days: float = 7, online_since: Optional[Dict[str, int]] = None) -> str:
+    """Soạn báo cáo dạng văn bản. `which`: all | online | offline.
+
+    `online_since` là {mac: thời điểm bắt đầu lần online hiện tại}; thiếu thì dùng lúc thấy lần đầu.
+    """
+    online_since = online_since or {}
+
+    def online_time(d):
+        since = online_since.get(d["mac"], d["first_seen"])
+        return f"online {duration(now - since)} (since {clock(since)})"
+
     online = sorted((d for d in devices if d["is_online"]),
                     key=lambda d: ipaddress.ip_address(d["ip"]))
     offline = sorted((d for d in devices if not d["is_online"]), key=lambda d: -d["last_seen"])
     lines = [f"📊 afing report{' · ' + network if network else ''}",
-             f"{time.strftime('%d %b %H:%M', time.localtime(now))} · "
+             f"{clock(now)} · "
              f"{len(online)} online · {len(offline)} offline"]
     if which in ("all", "online"):
         lines += ["", f"🟢 ONLINE ({len(online)})"]
-        lines += [_line(d, d["ip"]) for d in online] or ["(none)"]
+        lines += [_line(d, online_time(d)) for d in online] or ["(none)"]
     if which in ("all", "offline"):
         recent = [d for d in offline
                   if not offline_days or now - d["last_seen"] <= offline_days * 86400]
         lines += ["", f"⚪ OFFLINE ({len(offline)})"]
-        lines += [_line(d, "last seen " + ago(now - d["last_seen"])) for d in recent] or ["(none)"]
+        lines += [_line(d, f"last seen {clock(d['last_seen'])} ({ago(now - d['last_seen'])})")
+                  for d in recent] or ["(none)"]
         hidden = len(offline) - len(recent)
         if hidden and recent:
             lines.append(f"(+{hidden} not seen for over {offline_days:g} days)")
@@ -112,16 +142,18 @@ class Schedule:
 
 class Reporter:
     def __init__(self, config_path: str, devices: Callable[[], List[dict]], network: str = "",
-                 sender: Callable[[dict, str], list] = notify.send):
+                 sender: Callable[[dict, str], list] = notify.send,
+                 online_since: Callable[[], Dict[str, int]] = dict):
         self.config_path = config_path
         self._devices = devices
+        self._online_since = online_since
         self.network = network
         self._sender = sender
         self._schedule = Schedule(config_path)
 
     def text(self, which: str = "all", now: Optional[float] = None) -> str:
         return build(self._devices(), time.time() if now is None else now, self.network, which,
-                     settings(self.config_path)["offline_days"])
+                     settings(self.config_path)["offline_days"], self._online_since())
 
     def tick(self, now: float) -> bool:
         """Gọi ở mỗi lượt quét; gửi báo cáo nếu tới hạn. Trả True nếu đã gửi."""

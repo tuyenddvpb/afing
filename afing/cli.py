@@ -283,7 +283,8 @@ def run(argv, double_clicked: bool = False) -> int:
     monitor.notifier = notify.Notifier(notify_path, db.devices)
     active = monitor.notifier.active_channels()
     log.info("Thông báo: %s", ", ".join(active) if active else "tắt (bật bằng lệnh notify-setup)")
-    monitor.reporter = report.Reporter(cfg_path, db.devices, str(net.network))
+    monitor.reporter = report.Reporter(cfg_path, db.devices, str(net.network),
+                                       online_since=db.online_since)
     commands = report.TelegramCommands(cfg_path, monitor.reporter).start()
     rs = report.settings(cfg_path)
     when = [f"{h:02d}:{m:02d}" for h, m in rs["times"]]
