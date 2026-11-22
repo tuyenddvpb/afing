@@ -91,6 +91,35 @@ anyway), và một số phần mềm diệt virus có thể báo nhầm với fi
 
 `auto` (mặc định) dùng `arp` nếu đủ điều kiện, không thì dùng `passive`.
 
+## Thông báo ra điện thoại
+
+afing có thể nhắn cho bạn khi có **thiết bị mới**, khi một thiết bị **rời mạng** và khi nó **quay
+lại** - kể cả lúc bạn không ở nhà, vì tin đi qua Internet tới app trên điện thoại. Máy chạy afing
+chỉ gọi HTTPS ra ngoài; không phải mở cổng nào vào mạng nhà.
+
+```bash
+python -m afing notify-setup
+```
+
+(bản exe: `afing.exe notify-setup`). Lệnh hỏi bạn chọn kênh rồi gửi một tin thử:
+
+- **Telegram** (khuyên dùng): tạo bot bằng cách nhắn `/newbot` cho @BotFather, dán token, rồi nhắn
+  cho bot một chữ để afing biết gửi cho ai.
+- **ntfy**: cài app ntfy, đăng ký chủ đề ngẫu nhiên mà afing in ra. Không cần tài khoản.
+
+Không cần khởi động lại afing: bản đang chạy (kể cả bản tự chạy nền) nhận cấu hình mới ở lượt
+quét kế tiếp. `notify-test` gửi lại tin thử; `notify-off` tắt và xoá cấu hình.
+
+Để không bị làm phiền bởi thiết bị chập chờn (điện thoại ngủ, sóng yếu):
+
+- chỉ báo "rời mạng" khi thiết bị vắng mặt liên tục 5 phút (đổi bằng `"leave_after_minutes"`
+  trong `notify.json`);
+- chỉ báo "quay lại" cho thiết bị đã được báo rời mạng;
+- lần quét đầu tiên trên database trống gộp thành một tin tóm tắt.
+
+Lưu ý: nội dung thông báo (tên, IP, MAC thiết bị) đi qua máy chủ của Telegram hoặc ntfy. Cấu hình
+lưu trong `notify.json` cạnh database và chứa token - đừng chia sẻ file này.
+
 ## Nghe DHCP
 
 Khi kết nối vào mạng, thiết bị broadcast gói DHCP chứa tên máy của nó và các dấu hiệu nhận ra

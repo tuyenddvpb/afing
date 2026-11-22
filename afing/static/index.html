@@ -189,7 +189,8 @@ function render() {
     "Network ", el("b", null, status.network),
     " · scanner ", el("b", null, status.local_ip),
     " · scanning every " + status.interval + " sec (" + status.method + ")",
-    " · DHCP " + (status.dhcp ? "listening (" + status.dhcp_packets + " packets)" : "off")
+    " · DHCP " + (status.dhcp ? "listening (" + status.dhcp_packets + " packets)" : "off"),
+    " · alerts " + ((status.notify || []).join(", ") || "off")
   );
   $("error").hidden = !status.error;
   $("error").textContent = status.error ? "Last scan failed: " + status.error : "";

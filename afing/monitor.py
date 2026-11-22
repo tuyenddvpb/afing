@@ -48,6 +48,7 @@ class Monitor:
         self.interval = interval
         self.offline_after = max(offline_after, interval * 2)
         self._stop = threading.Event()
+        self.notifier = None  # notify.Notifier, gán từ ngoài nếu dùng thông báo
         self._name_due: Dict[str, float] = {}
         self._dhcp_fresh: set = set()  # MAC vừa có gói DHCP mới, cần nhận diện lại ngay
         self.status = {
@@ -62,6 +63,7 @@ class Monitor:
             "error": None,
             "dhcp": False,
             "dhcp_packets": 0,
+            "notify": [],
         }
 
     def on_dhcp(self, info: dict) -> None:
@@ -109,6 +111,12 @@ class Monitor:
             scan_count=self.status["scan_count"] + 1,
         )
         self._resolve_names(seen)
+        if self.notifier:  # sau khi dò tên, để thông báo có tên/loại thiết bị
+            try:
+                self.status["notify"] = self.notifier.active_channels()
+                self.notifier.process(events, now, str(self.net.network))
+            except Exception:
+                log.exception("Xử lý thông báo lỗi")
         return seen
 
     def _resolve_names(self, seen: Dict[str, str]) -> None:

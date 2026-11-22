@@ -11,7 +11,7 @@ import urllib.request
 import socket
 import time
 
-from afing import alias, autostart, dhcp, discovery, names, netinfo, scanner
+from afing import alias, autostart, dhcp, notify, discovery, names, netinfo, scanner
 from afing.classify import TYPES, classify
 from afing.monitor import describe
 from afing.db import Database
@@ -571,11 +571,11 @@ class AutostartTests(unittest.TestCase):
 
     def test_task_xml_is_well_formed_and_escaped(self):
         import xml.etree.ElementTree as ET
-        xml = autostart.build_xml(r"C:\A&B\afing.exe", 'run --db "C:\A&B\<x>.db"', r"C:\A&B")
+        xml = autostart.build_xml(r"C:\A&B\afing.exe", r'run --db "C:\A&B\<x>.db"', r"C:\A&B")
         root = ET.fromstring(xml.encode("utf-16"))
         ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
         self.assertEqual(root.find(".//t:Command", ns).text, r"C:\A&B\afing.exe")
-        self.assertEqual(root.find(".//t:Arguments", ns).text, 'run --db "C:\A&B\<x>.db"')
+        self.assertEqual(root.find(".//t:Arguments", ns).text, r'run --db "C:\A&B\<x>.db"')
         self.assertEqual(root.find(".//t:ExecutionTimeLimit", ns).text, "PT0S")   # không giới hạn
         self.assertEqual(root.find(".//t:UserId", ns).text, "S-1-5-18")           # SYSTEM
         self.assertIsNotNone(root.find(".//t:BootTrigger", ns))
@@ -584,6 +584,158 @@ class AutostartTests(unittest.TestCase):
     def test_refuses_on_non_windows(self):
         self.assertEqual(autostart.install([], 8080), 1)
         self.assertEqual(autostart.uninstall(), 1)
+
+
+class FakeChatService:
+    """Máy chủ HTTP giả đóng vai Telegram và ntfy, ghi lại mọi request nhận được."""
+
+    def __init__(self, status=200):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        self.requests = []
+        outer = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _reply(self, body=b"{}"):
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):
+                data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                outer.requests.append((self.path, dict(self.headers), data))
+                self._reply(b'{"ok":false,"description":"Unauthorized"}' if status != 200 else b"{}")
+
+            def do_GET(self):
+                outer.requests.append((self.path, dict(self.headers), b""))
+                self._reply(json.dumps({"ok": True, "result": [
+                    {"message": {"chat": {"id": 111, "first_name": "Old"}}},
+                    {"message": {"chat": {"id": 987654, "first_name": "Tuyen", "last_name": "D"}}},
+                ]}).encode())
+
+        self.server = HTTPServer(("127.0.0.1", 0), H)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class NotifyTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg_path = os.path.join(self.tmp.name, "notify.json")
+        self.db = Database(os.path.join(self.tmp.name, "t.db"))
+        self.sent = []
+        self.notifier = notify.Notifier(self.cfg_path, self.db.devices,
+                                        sender=lambda cfg, text: self.sent.append(text) or [])
+        self._urls = (notify.TELEGRAM_API, notify.NTFY_SERVER)
+
+    def tearDown(self):
+        notify.TELEGRAM_API, notify.NTFY_SERVER = self._urls
+        self.db.close()
+        self.tmp.cleanup()
+
+    def enable(self, **extra):
+        notify.save_config(self.cfg_path, {"ntfy": {"topic": "t"}, **extra})
+
+    def scan(self, seen, now):
+        events = self.db.apply_scan(seen, now, 45, vendor_lookup=lambda m: "Apple, Inc.")
+        return self.notifier.process(events, now, "192.168.102.0/24")
+
+    def test_disabled_sends_nothing(self):
+        self.assertEqual(self.scan({"10.0.0.1": "aa:aa:aa:aa:aa:01"}, 1000), [])
+        self.assertEqual(notify.channels({}), [])
+        self.assertEqual(notify.channels({"telegram": {"token": "x"}}), [])  # thiếu chat_id
+
+    def test_first_inventory_is_one_summary_then_new_devices_are_reported(self):
+        self.enable()
+        a, b, c = ("aa:aa:aa:aa:aa:01", "aa:aa:aa:aa:aa:02", "f8:10:93:3b:a5:03")
+        lines = self.scan({"10.0.0.1": a, "10.0.0.2": b}, 1000)
+        self.assertEqual(lines, ["✅ afing is now watching 192.168.102.0/24: 2 devices found."])
+
+        self.db.apply_scan({"10.0.0.1": a, "10.0.0.2": b, "10.0.0.28": c}, 1010, 45)
+        self.db.set_identities({c: {"name": "MDs-phone", "name_rank": 2, "type": "mobile", "os": "iOS"}})
+        events = [{"ts": 1010, "mac": c, "type": "new", "ip": "10.0.0.28", "detail": None}]
+        (line,) = self.notifier.process(events, 1010)
+        animal = self.db.devices()[2]["alias"]
+        self.assertEqual(line, f"🆕 New device\n{alias.icon(animal)} {animal} — MDs-phone (Phone · iOS)"
+                               f"\n10.0.0.28 · {c}")
+
+    def test_leave_is_debounced_and_back_only_follows_a_reported_leave(self):
+        self.enable(leave_after_minutes=5)
+        a, b = "aa:aa:aa:aa:aa:01", "aa:aa:aa:aa:aa:02"
+        self.scan({"10.0.0.1": a, "10.0.0.2": b}, 1000)
+        self.assertEqual(self.scan({"10.0.0.1": a}, 1100), [])       # b vắng: chưa báo
+        self.assertEqual(self.scan({"10.0.0.1": a, "10.0.0.2": b}, 1200), [])  # chập chờn: im lặng
+        self.assertEqual(self.scan({"10.0.0.1": a}, 1300), [])       # b vắng lần nữa
+        self.assertEqual(self.scan({"10.0.0.1": a}, 1500), [])       # mới 200 giây
+        (left,) = self.scan({"10.0.0.1": a}, 1300 + 301)
+        self.assertTrue(left.startswith("🔴 Left the network\n"))
+        self.assertIn(b, left)
+        self.assertEqual(self.scan({"10.0.0.1": a}, 2000), [])       # không báo lặp
+        (back,) = self.scan({"10.0.0.1": a, "10.0.0.2": b}, 3000)
+        self.assertTrue(back.startswith("🟢 Back online\n"))
+        import time as _t
+        for _ in range(50):
+            if len(self.sent) == 3:
+                break
+            _t.sleep(0.02)
+        self.assertEqual(len(self.sent), 3)                          # summary, left, back
+
+    def test_send_to_telegram_and_ntfy(self):
+        svc = FakeChatService()
+        notify.TELEGRAM_API = notify.NTFY_SERVER = svc.url
+        try:
+            cfg = {"telegram": {"token": "123:ABC", "chat_id": 987654}, "ntfy": {"topic": "afing-x"}}
+            self.assertEqual(notify.send(cfg, "🆕 Thiết bị mới"), [("telegram", None), ("ntfy", None)])
+            (tg_path, _, tg_body), (nt_path, nt_headers, nt_body) = svc.requests
+            self.assertEqual(tg_path, "/bot123:ABC/sendMessage")
+            self.assertEqual(json.loads(tg_body)["chat_id"], 987654)
+            self.assertEqual(json.loads(tg_body)["text"], "🆕 Thiết bị mới")
+            self.assertEqual((nt_path, nt_body.decode()), ("/afing-x", "🆕 Thiết bị mới"))
+            self.assertEqual(notify.telegram_find_chat("123:ABC"), (987654, "Tuyen D"))
+        finally:
+            svc.close()
+
+    def test_errors_are_reported_without_leaking_the_token(self):
+        svc = FakeChatService(status=401)
+        notify.TELEGRAM_API = svc.url
+        try:
+            ((channel, error),) = notify.send({"telegram": {"token": "SECRET:TOKEN", "chat_id": 1}}, "x")
+        finally:
+            svc.close()
+        self.assertEqual(channel, "telegram")
+        self.assertIn("401", error)
+        self.assertNotIn("SECRET", error)
+        notify.TELEGRAM_API = "http://127.0.0.1:1"
+        ((_, error),) = notify.send({"telegram": {"token": "SECRET:TOKEN", "chat_id": 1}}, "x")
+        self.assertNotIn("SECRET", error)
+
+    def test_interactive_setup_test_and_disable(self):
+        svc = FakeChatService()
+        notify.TELEGRAM_API = notify.NTFY_SERVER = svc.url
+        out = []
+        try:
+            answers = iter(["1", " 123:ABC ", ""])
+            self.assertEqual(notify.setup(self.cfg_path, lambda q: next(answers), out.append), 0)
+            self.assertEqual(notify.load_config(self.cfg_path)["telegram"],
+                             {"token": "123:ABC", "chat_id": 987654})
+            answers = iter(["2", ""])
+            self.assertEqual(notify.setup(self.cfg_path, lambda q: next(answers), out.append), 0)
+            cfg = notify.load_config(self.cfg_path)
+            self.assertEqual(notify.channels(cfg), ["telegram", "ntfy"])
+            self.assertRegex(cfg["ntfy"]["topic"], r"^afing-[0-9a-f]{16}$")
+            self.assertEqual(notify.setup(self.cfg_path, lambda q: "9", out.append), 1)
+        finally:
+            svc.close()
+        self.assertEqual(notify.disable(self.cfg_path, out.append), 0)
+        self.assertEqual(notify.test(self.cfg_path, out.append), 1)
+        self.assertEqual(notify.load_config(self.cfg_path), {})
 
 
 class OuiTests(unittest.TestCase):

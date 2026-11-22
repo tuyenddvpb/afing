@@ -8,3 +8,6 @@ oui.csv.tmp
 .venv/
 build/
 dist/
+notify.json
+notify.json.tmp
+*.log

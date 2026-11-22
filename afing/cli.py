@@ -11,7 +11,7 @@ import time
 import traceback
 import webbrowser
 
-from . import __version__, autostart
+from . import __version__, autostart, notify
 from .db import Database
 from .dhcp import DhcpListener, why_unavailable
 from .classify import TYPES
@@ -41,11 +41,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--version", action="version", version=f"afing {__version__}")
     p.add_argument("command", nargs="?", default="run", choices=["run", "scan", "dhcp", "mdns", "update-oui",
-                            "install-autostart", "uninstall-autostart"],
+                            "install-autostart", "uninstall-autostart",
+                            "notify-setup", "notify-test", "notify-off"],
                    help="run: quét liên tục + web (mặc định) | scan: quét 1 lần rồi in ra |"
                         " dhcp: chỉ nghe và in gói DHCP (để thử) | mdns: in mọi thứ nghe được qua mDNS (để thử) | update-oui: tải bảng hãng sản xuất |"
                         " install-autostart / uninstall-autostart: bật / tắt tự chạy khi Windows"
-                        " khởi động (cần quyền admin)")
+                        " khởi động (cần quyền admin) |"
+                        " notify-setup / notify-test / notify-off: cài, thử, tắt thông báo ra"
+                        " điện thoại (Telegram hoặc ntfy)")
     p.add_argument("--subnet", help="subnet cần quét, vd 192.168.1.0/24 (mặc định: tự dò)")
     p.add_argument("--interval", type=int, default=10, help="số giây giữa 2 lượt quét (10)")
     p.add_argument("--offline-after", type=int, default=45,
@@ -154,6 +157,13 @@ def run(argv) -> int:
                         datefmt="%Y-%m-%d %H:%M:%S" if args.log_file else "%H:%M:%S",
                         handlers=handlers)
 
+    notify_path = os.path.join(os.path.dirname(os.path.abspath(args.db)), "notify.json")
+    if args.command == "notify-setup":
+        return notify.setup(notify_path)
+    if args.command == "notify-test":
+        return notify.test(notify_path)
+    if args.command == "notify-off":
+        return notify.disable(notify_path)
     if args.command == "uninstall-autostart":
         return autostart.uninstall()
     if args.command == "install-autostart":
@@ -225,6 +235,9 @@ def run(argv) -> int:
 
     db = Database(args.db)
     monitor = Monitor(net, scanner, db, oui, args.interval, args.offline_after)
+    monitor.notifier = notify.Notifier(notify_path, db.devices)
+    active = monitor.notifier.active_channels()
+    log.info("Thông báo: %s", ", ".join(active) if active else "tắt (bật bằng lệnh notify-setup)")
     listener = None
     if not args.no_dhcp:
         try:
