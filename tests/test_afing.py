@@ -586,6 +586,302 @@ class AutostartTests(unittest.TestCase):
         self.assertEqual(autostart.uninstall(), 1)
 
 
+class ManageTests(unittest.TestCase):
+    """Quản lý thiết bị: sửa, đánh dấu quen, xoá, gộp, lịch sử, xuất file, mật khẩu, cấu hình."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg = os.path.join(self.tmp.name, "afing.cfg")
+        config.ensure(self.cfg)
+        self.db = Database(os.path.join(self.tmp.name, "t.db"))
+        self.old, self.new, self.tv = "6a:ca:7e:90:81:14", "f8:10:93:3b:a5:03", "68:72:c3:01:d6:be"
+        self.db.apply_scan({"10.0.0.23": self.old, "10.0.0.4": self.tv}, 1000, 45)
+        self.db.apply_scan({"10.0.0.4": self.tv}, 2000, 45)                       # old rời mạng
+        self.db.apply_scan({"10.0.0.4": self.tv, "10.0.0.28": self.new}, 3000, 45)
+        net = netinfo.NetInfo(ipaddress.ip_network("10.0.0.0/24"), "10.0.0.2")
+        self.monitor = Monitor(net, FakeScanner(), self.db, OuiTable(os.path.join(self.tmp.name, "o.csv")))
+        self.server = make_server("127.0.0.1", 0, self.db, self.monitor, self.cfg,
+                                  os.path.join(self.tmp.name, "afing.log"))
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.db.close()
+        self.tmp.cleanup()
+
+    def call(self, path, body=None, password=None, ctype="application/json"):
+        headers = {"Content-Type": ctype} if body is not None else {}
+        if password is not None:
+            import base64
+            headers["Authorization"] = "Basic " + base64.b64encode(f"x:{password}".encode()).decode()
+        data = json.dumps(body).encode() if isinstance(body, (dict, list)) else body
+        req = urllib.request.Request(self.base + path, data=data, headers=headers)
+        try:
+            with urllib.request.urlopen(req) as r:
+                raw = r.read()
+                return r.status, (json.loads(raw) if "json" in r.headers["Content-Type"] else raw)
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers
+
+    def dev(self, mac):
+        return self.db.device(mac)
+
+    def test_edit_fields_and_validation(self):
+        url = f"/api/devices/{self.tv}"
+        self.assertEqual(self.call(url, {"custom_name": " TV phòng khách ", "custom_type": "tv",
+                                         "person": "Mẹ", "notes": "tầng 1", "known": True,
+                                         "alert": "always"})[0], 200)
+        d = self.dev(self.tv)
+        self.assertEqual((d["custom_name"], d["custom_type"], d["person"], d["notes"], d["known"], d["alert"]),
+                         ("TV phòng khách", "tv", "Mẹ", "tầng 1", 1, "always"))
+        self.assertEqual(self.call(url, {"custom_type": "", "alert": "", "known": False})[0], 200)
+        d = self.dev(self.tv)
+        self.assertEqual((d["custom_type"], d["alert"], d["known"], d["custom_name"]),
+                         (None, None, 0, "TV phòng khách"))                 # trường không gửi thì giữ
+        self.assertEqual(self.call(url, {"custom_type": "spaceship"})[0], 400)
+        self.assertEqual(self.call(url, {"alert": "sometimes"})[0], 400)
+        self.assertEqual(self.call(url, {"custom_name": 5})[0], 400)
+        self.assertEqual(self.call("/api/devices/00:00:00:00:00:01", {"known": True})[0], 404)
+        self.assertEqual(self.call(url, b"known=1", ctype="application/x-www-form-urlencoded")[0], 415)
+        self.assertEqual(self.call("/api/devices/known-all", {})[1]["count"], 3)
+        self.assertEqual(sum(d["known"] for d in self.db.devices()), 3)
+
+    def test_merge_moves_identity_and_history_to_the_new_mac(self):
+        self.db.update_device(self.old, {"custom_name": "iPhone của Mẹ", "person": "Mẹ", "known": True})
+        animal = self.dev(self.old)["alias"]
+        self.assertEqual(self.call(f"/api/devices/{self.old}/merge", {"into": self.new})[0], 200)
+        self.assertIsNone(self.dev(self.old))
+        d = self.dev(self.new)
+        self.assertEqual((d["alias"], d["custom_name"], d["person"], d["known"], d["first_seen"], d["ip"]),
+                         (animal, "iPhone của Mẹ", "Mẹ", 1, 1000, "10.0.0.28"))
+        self.assertEqual({e["type"] for e in self.db.device_events(self.new)}, {"new", "offline"})
+        self.assertEqual(len(self.db.device_events(self.new)), 3)
+        self.assertEqual(self.call(f"/api/devices/{self.new}/merge", {"into": self.new})[0], 404)
+        self.assertEqual(self.call(f"/api/devices/{self.tv}/merge", {"into": "nope"})[0], 400)
+        self.assertEqual(len({d["alias"] for d in self.db.devices()}), 2)
+
+    def test_delete_removes_device_and_history(self):
+        self.assertEqual(self.call(f"/api/devices/{self.old}/delete", {})[0], 200)
+        self.assertIsNone(self.dev(self.old))
+        self.assertEqual(self.db.device_events(self.old), [])
+        self.assertEqual(self.call(f"/api/devices/{self.old}/delete", {})[0], 404)
+        self.assertEqual(len(self.db.devices()), 2)
+
+    def test_detail_sessions_and_exports(self):
+        self.assertEqual(self.db.sessions(self.old, 0, 5000), [[1000, 2000]])
+        self.assertEqual(self.db.sessions(self.tv, 0, 5000), [[1000, 5000]])     # còn online
+        self.assertEqual(self.db.sessions(self.old, 1500, 5000), [[1500, 2000]])
+        self.assertEqual(self.db.sessions(self.old, 2500, 5000), [])
+        self.db.apply_scan({"10.0.0.4": self.tv, "10.0.0.28": self.new, "10.0.0.23": self.old}, 4000, 45)
+        self.assertEqual(self.db.sessions(self.old, 0, 5000), [[1000, 2000], [4000, 5000]])
+        status, detail = self.call(f"/api/devices/{self.old}")
+        self.assertEqual(status, 200)
+        self.assertEqual(detail["device"]["mac"], self.old)
+        self.assertEqual([e["type"] for e in detail["events"]], ["online", "offline", "new"])
+        self.assertEqual(self.call("/api/devices/00:00:00:00:00:01")[0], 404)
+
+        self.db.update_device(self.tv, {"custom_name": 'TV "phòng khách", tầng 1'})
+        _, raw = self.call("/api/export/devices.csv")
+        self.assertTrue(raw.startswith(b"\xef\xbb\xbf"))                         # BOM cho Excel
+        import csv as _csv
+        rows = list(_csv.DictReader(raw.decode("utf-8-sig").splitlines()))
+        self.assertEqual(len(rows), 3)
+        tv = next(r for r in rows if r["mac"] == self.tv)
+        self.assertEqual((tv["custom_name"], tv["ip"], tv["is_online"]),
+                         ('TV "phòng khách", tầng 1', "10.0.0.4", "1"))
+        _, raw = self.call("/api/export/events.csv")
+        events = list(_csv.DictReader(raw.decode("utf-8-sig").splitlines()))
+        self.assertEqual([e["event"] for e in events], ["new", "new", "offline", "new", "online"])
+
+    def test_password_protects_everything(self):
+        self.assertEqual(self.call("/api/state")[0], 200)
+        config.set_values(self.cfg, "web", {"password": "bí mật 123"})
+        status, headers = self.call("/api/state")
+        self.assertEqual(status, 401)
+        self.assertIn("Basic", headers["WWW-Authenticate"])
+        self.assertEqual(self.call("/")[0], 401)
+        self.assertEqual(self.call("/api/export/devices.csv")[0], 401)
+        self.assertEqual(self.call(f"/api/devices/{self.tv}/delete", {})[0], 401)
+        self.assertIsNotNone(self.dev(self.tv))
+        self.assertEqual(self.call("/api/state", password="sai")[0], 401)
+        self.assertEqual(self.call("/api/state", password="bí mật 123")[0], 200)
+        self.assertEqual(self.call(f"/api/devices/{self.tv}", {"known": True}, password="bí mật 123")[0], 200)
+
+    def test_config_api_masks_secrets_and_validates(self):
+        config.set_values(self.cfg, "notify", {"telegram_token": "123456:ABCDEFGHIJ", "telegram_chat_id": 5})
+        status, body = self.call("/api/config")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["values"]["web"]["port"], "8080")
+        self.assertEqual(body["values"]["notify"]["telegram_token"], "••••••GHIJ")
+        self.assertNotIn("ABCDEF", json.dumps(body))
+        post = lambda s, k, v: self.call("/api/config", {"section": s, "key": k, "value": v})
+        self.assertEqual(post("web", "port", "9000")[0], 200)
+        self.assertEqual(post("report", "times", "08:00, 21:30")[0], 200)
+        self.assertEqual(post("notify", "telegram_token", "••••••GHIJ")[1].get("unchanged"), True)
+        self.assertEqual(post("web", "port", "abc")[0], 400)
+        self.assertEqual(post("web", "nope", "1")[0], 400)
+        loaded = config.load(self.cfg)
+        self.assertEqual((loaded["web", "port"], loaded["report", "times"], loaded["notify", "telegram_token"]),
+                         (9000, [(8, 0), (21, 30)], "123456:ABCDEFGHIJ"))
+        self.assertEqual(self.call("/api/notify-test", {})[0], 200)
+        self.assertEqual(self.call("/api/log")[1]["lines"], [])
+        _, state = self.call("/api/state")
+        self.assertEqual((state["language"], state["can_admin"], state["muted_until"]), ("en", True, 0))
+        self.assertGreater(self.call("/api/mute", {"minutes": 30})[1]["muted_until"], time.time())
+        self.assertEqual(self.call("/api/mute", {"minutes": 0})[1]["muted_until"], 0)
+
+
+class AlertRuleTests(unittest.TestCase):
+    """Quy tắc thông báo: thiết bị quen/lạ, đặt riêng từng máy, giờ yên lặng, /mute, ngôn ngữ."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg = os.path.join(self.tmp.name, "afing.cfg")
+        config.ensure(self.cfg)
+        config.set_values(self.cfg, "notify", {"ntfy_topic": "t", "leave_after_minutes": 1})
+        self.db = Database(os.path.join(self.tmp.name, "t.db"))
+        self.sent = []
+        self.muted = [0.0]
+        self.notifier = notify.Notifier(
+            self.cfg, self.db.devices, muted_until=lambda: self.muted[0],
+            sender=lambda cfg, text, buttons=None: self.sent.append((text, buttons)) or [])
+        self.a, self.b, self.c = "aa:aa:aa:aa:aa:01", "aa:aa:aa:aa:aa:02", "aa:aa:aa:aa:aa:03"
+        self.t = 1_800_000_000
+        self.scan({"10.0.0.1": self.a, "10.0.0.2": self.b, "10.0.0.3": self.c})
+
+    def tearDown(self):
+        self.db.close()
+        self.tmp.cleanup()
+
+    def scan(self, seen, dt=0):
+        self.t += dt
+        events = self.db.apply_scan(seen, self.t, 45)
+        return self.notifier.process(events, self.t, "10.0.0.0/24")
+
+    def leave_and_return(self, mac):
+        """Cho `mac` rời mạng đủ lâu rồi quay lại; trả các dòng thông báo phát sinh."""
+        everyone = {"10.0.0.1": self.a, "10.0.0.2": self.b, "10.0.0.3": self.c}
+        without = {ip: m for ip, m in everyone.items() if m != mac}
+        lines = self.scan(without, 100) + self.scan(without, 100) + self.scan(everyone, 100)
+        return [line.split("\n")[0] for line in lines]
+
+    def test_presence_rules_by_known_flag_and_per_device_override(self):
+        self.assertEqual(self.leave_and_return(self.a), ["🔴 Left the network", "🟢 Back online"])
+        config.set_values(self.cfg, "notify", {"presence_alerts": "unknown"})
+        self.db.update_device(self.a, {"known": True})
+        self.assertEqual(self.leave_and_return(self.a), [])                  # máy quen: im lặng
+        self.assertEqual(self.leave_and_return(self.b), ["🔴 Left the network", "🟢 Back online"])
+        self.db.update_device(self.a, {"alert": "always"})                    # theo dõi riêng máy này
+        self.assertEqual(self.leave_and_return(self.a), ["🔴 Left the network", "🟢 Back online"])
+        self.db.update_device(self.b, {"alert": "never"})
+        self.assertEqual(self.leave_and_return(self.b), [])
+        config.set_values(self.cfg, "notify", {"presence_alerts": "none"})
+        self.assertEqual(self.leave_and_return(self.c), [])
+        self.assertEqual(self.leave_and_return(self.a), ["🔴 Left the network", "🟢 Back online"])
+
+    def test_quiet_hours_mute_and_new_device_buttons(self):
+        now = time.localtime(self.t + 150)
+        start = now.tm_hour * 60 + now.tm_min - 30
+        span = "{:02d}:{:02d}-{:02d}:{:02d}".format((start // 60) % 24, start % 60,
+                                                   ((start + 120) // 60) % 24, (start + 120) % 60)
+        config.set_values(self.cfg, "notify", {"quiet_hours": span})
+        self.assertEqual(self.leave_and_return(self.a), [])                  # đang giờ yên lặng
+        self.assertTrue(notify.in_quiet_hours((23 * 60, 7 * 60), time.mktime((2026, 1, 1, 2, 0, 0, 0, 0, -1))))
+        self.assertFalse(notify.in_quiet_hours((23 * 60, 7 * 60), time.mktime((2026, 1, 1, 12, 0, 0, 0, 0, -1))))
+        self.assertFalse(notify.in_quiet_hours(None, self.t))
+
+        # thiết bị lạ mới vào: vẫn báo trong giờ yên lặng, kèm nút đánh dấu
+        new = "aa:aa:aa:aa:aa:99"
+        everyone = {"10.0.0.1": self.a, "10.0.0.2": self.b, "10.0.0.3": self.c, "10.0.0.9": new}
+        before = len(self.sent)
+        (line,) = self.scan(everyone, 10)
+        self.assertTrue(line.startswith("🆕 New device"))
+        for _ in range(50):
+            if len(self.sent) > before:
+                break
+            time.sleep(0.02)
+        text, buttons = self.sent[-1]
+        self.assertEqual(buttons, [[("✅ I know this device", f"known:{new}"), ("🚫 Unknown", f"unknown:{new}")]])
+
+        config.set_values(self.cfg, "notify", {"quiet_hours": "", "new_device_alerts": "no"})
+        everyone["10.0.0.10"] = "aa:aa:aa:aa:aa:98"
+        self.assertEqual(self.scan(everyone, 10), [])                        # đã tắt báo thiết bị mới
+
+        self.muted[0] = self.t + 10_000                                      # /mute
+        sent = len(self.sent)
+        self.assertEqual(self.leave_and_return(self.a), [])
+        time.sleep(0.1)
+        self.assertEqual(len(self.sent), sent)
+
+    def test_vietnamese_messages(self):
+        config.set_values(self.cfg, "web", {"language": "vi"})
+        self.db.set_identities({self.a: {"name": "MDs-phone", "type": "mobile"}})
+        everyone = {"10.0.0.1": self.a, "10.0.0.2": self.b, "10.0.0.3": self.c}
+        without = {"10.0.0.2": self.b, "10.0.0.3": self.c}
+        self.scan(without, 100)
+        (left,) = self.scan(without, 100)
+        self.assertTrue(left.startswith("🔴 Đã rời mạng\n"))
+        self.assertIn("(Điện thoại)", left)
+        (back,) = self.scan(everyone, 100)
+        self.assertTrue(back.startswith("🟢 Đã quay lại mạng"))
+        text = report.build(self.db.devices(), self.t, "10.0.0.0/24", lang="vi")
+        self.assertIn("📊 Báo cáo afing · 10.0.0.0/24", text)
+        self.assertIn("🟢 TRỰC TUYẾN (3)", text)
+        self.assertIn("⚪ NGOẠI TUYẾN (0)\n(không có)", text)
+        for lang in ("en", "vi"):                       # hai bảng chuỗi phải có cùng bộ khoá
+            self.assertEqual(set(notify.i18n.TEXT[lang]), set(notify.i18n.TEXT["en"]))
+            self.assertEqual(set(notify.i18n.TEXT[lang]["types"]), set(TYPES))
+
+    def test_bot_management_commands(self):
+        self.db.update_device(self.a, {"custom_name": "MDs-phone", "person": "Mẹ"})
+        self.db.update_device(self.b, {"person": "Bố"})
+        self.db.apply_scan({"10.0.0.1": self.a, "10.0.0.3": self.c}, self.t + 500, 45)   # b rời mạng
+        rep = report.Reporter(self.cfg, self.db.devices, "10.0.0.0/24", online_since=self.db.online_since)
+        bot = report.TelegramCommands(self.cfg, rep, self.db)
+        ask = lambda text, chat=1: bot.replies({"message": {"chat": {"id": chat}, "text": text}}, 1)
+        alias_a = self.db.device(self.a)["alias"]
+
+        who = ask("/who")[0][1]
+        self.assertIn(f"🟢 Mẹ — home ({alias_a})", who)
+        self.assertIn("⚪ Bố — away", who)
+        found = ask("/find mds")[0][1]
+        self.assertIn(self.a, found)
+        self.assertNotIn(self.b, found)
+        self.assertIn("No device matches", ask("/find zzz")[0][1])
+        self.assertIn("Usage", ask("/find")[0][1])
+
+        self.assertIn("is now named", ask(f"/rename {alias_a} = iPhone của Mẹ")[0][1])
+        self.assertEqual(self.db.device(self.a)["custom_name"], "iPhone của Mẹ")
+        self.assertIn("Usage", ask("/rename iphone")[0][1])
+        self.assertIn("matches 3 devices", ask("/rename 10.0.0 = x")[0][1])   # mơ hồ: không đổi gì
+        self.assertIn("marked as known", ask(f"/known {self.c}")[0][1])
+        self.assertEqual(self.db.device(self.c)["known"], 1)
+
+        self.assertIn("paused until", ask("/mute 2h")[0][1])
+        self.assertAlmostEqual(float(self.db.get_state("mute_until")), time.time() + 7200, delta=5)
+        self.assertIn("Usage", ask("/mute soon")[0][1])
+        self.assertIn("resumed", ask("/unmute")[0][1])
+        self.assertEqual(self.db.get_state("mute_until"), "0")
+        self.assertEqual([report.parse_span(s) for s in ("30m", "2h", "1d", "45", "x", "0")],
+                         [1800, 7200, 86400, 2700, None, None])
+
+        # bấm nút dưới tin "thiết bị mới"
+        press = lambda data, chat=1: bot.replies(
+            {"callback_query": {"id": "q", "data": data, "message": {"chat": {"id": chat}}}}, 1)
+        self.assertIn("marked as known", press(f"known:{self.b}")[0][1])
+        self.assertEqual(self.db.device(self.b)["known"], 1)
+        self.assertIn("left as unknown", press(f"unknown:{self.b}")[0][1])
+        self.assertEqual(self.db.device(self.b)["known"], 0)
+        # người lạ không sửa được gì
+        self.assertEqual(press(f"known:{self.b}", chat=2), [])
+        self.assertEqual(ask(f"/rename {alias_a} = hacked", chat=2), [])
+        self.assertEqual(ask("/mute 1h", chat=2), [])
+        self.assertEqual(self.db.device(self.b)["known"], 0)
+        self.assertEqual(self.db.device(self.a)["custom_name"], "iPhone của Mẹ")
+
+
 class FakeChatService:
     """Máy chủ HTTP giả đóng vai Telegram và ntfy, ghi lại mọi request nhận được."""
 
@@ -638,7 +934,7 @@ class NotifyTests(unittest.TestCase):
         self.db = Database(os.path.join(self.tmp.name, "t.db"))
         self.sent = []
         self.notifier = notify.Notifier(self.cfg_path, self.db.devices,
-                                        sender=lambda cfg, text: self.sent.append(text) or [])
+                                        sender=lambda cfg, text, buttons=None: self.sent.append((text, buttons)) or [])
         self._urls = (notify.TELEGRAM_API, notify.NTFY_SERVER)
 
     def tearDown(self):
@@ -802,6 +1098,8 @@ class ConfigTests(unittest.TestCase):
                              ("[scan]\ndhcp = maybe\n", "yes hoặc no"),
                              ("[scan]\ninterval = 0\n", "lớn hơn 0"),
                              ("[scan]\nmethod = magic\n", "auto, arp"),
+                             ("[web]\nlanguage = fr\n", "en, vi"),
+                             ("[notify]\nquiet_hours = 25:00-07:00\n", "23:00-07:00"),
                              ("port = 1\n", "không đọc được")]:
             self.write(text)
             with self.assertRaises(config.ConfigError) as ctx:
@@ -818,7 +1116,7 @@ class ConfigTests(unittest.TestCase):
             text = f.read()
         expected = config.TEMPLATE.replace("port = 8080", "port = 8123") \
             .replace("telegram_token =", "telegram_token = 123:ABC") \
-            .replace("leave_after_minutes = 5\n", "leave_after_minutes = 5\nbrand_new = x\n")
+            .replace("quiet_hours =\n", "quiet_hours =\nbrand_new = x\n")
         self.assertEqual(text, expected + "\n[extra]\nk = v")
         loaded = config.load(self.path)
         self.assertEqual((loaded["web", "port"], loaded["web", "host"]), (8123, "127.0.0.1"))
@@ -855,7 +1153,7 @@ class ReportTests(unittest.TestCase):
                                 self.phone: {"name": "MDs-phone", "type": "mobile"}})
         self.sent = []
         self.reporter = report.Reporter(self.cfg, self.db.devices, "10.0.0.0/24",
-                                        sender=lambda cfg, text: self.sent.append(text) or [],
+                                        sender=lambda cfg, text, buttons=None: self.sent.append(text) or [],
                                         online_since=self.db.online_since)
         self._api = notify.TELEGRAM_API
 
@@ -960,14 +1258,24 @@ class ReportTests(unittest.TestCase):
         old = os.path.join(self.tmp.name, "old.cfg")
         with open(old, "w", encoding="utf-8") as f:
             f.write("# của tôi\n[web]\nport = 9000\n\n[notify]\ntelegram_token = 1:A\n")
-        self.assertEqual(config.upgrade(old), ["scan", "data", "report"])
+        added = config.upgrade(old)
+        self.assertEqual([a for a in added if a.startswith("[")], ["[scan]", "[data]", "[report]"])
+        self.assertIn("web.password", added)                 # khoá mới trong mục đã có
+        self.assertIn("notify.quiet_hours", added)
+        self.assertNotIn("web.port", added)
+        self.assertNotIn("notify.telegram_token", added)
         self.assertEqual(config.upgrade(old), [])
+        fresh = os.path.join(self.tmp.name, "fresh.cfg")
+        config.ensure(fresh)
+        self.assertEqual(config.upgrade(fresh), [])          # file mẫu đã đủ, không thêm gì
         loaded = config.load(old)
         self.assertEqual((loaded["web", "port"], loaded["notify", "telegram_token"]), (9000, "1:A"))
         with open(old, encoding="utf-8") as f:
             text = f.read()
         self.assertTrue(text.startswith("# của tôi\n[web]\nport = 9000\n"))
         self.assertIn("[report]\n# Báo cáo danh sách", text)
+        self.assertIn("port = 9000\n# 127.0.0.1 = chỉ máy này", text)   # khoá mới chèn ngay trong mục
+        self.assertEqual(text.count("[web]"), 1)
 
     def test_bot_commands_only_answer_the_configured_chat(self):
         bot = report.TelegramCommands(self.cfg, self.reporter)

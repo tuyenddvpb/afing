@@ -28,6 +28,11 @@ host = 127.0.0.1
 open_browser = yes
 # no = chỉ quét và ghi database, không chạy dashboard
 enabled = yes
+# Mật khẩu để mở dashboard (tên đăng nhập gõ gì cũng được). Để trống = không cần mật khẩu.
+# Nên đặt khi host = 0.0.0.0.
+password =
+# Ngôn ngữ của dashboard và của tin nhắn/báo cáo: en | vi
+language = en
 
 [scan]
 # Dải mạng cần quét, ví dụ 192.168.1.0/24. Để trống = tự dò theo mạng máy đang nối.
@@ -57,6 +62,14 @@ ntfy_topic =
 ntfy_server = https://ntfy.sh
 # Thiết bị vắng mặt liên tục bấy nhiêu phút mới báo "rời mạng"
 leave_after_minutes = 5
+# Báo khi có thiết bị chưa từng thấy vào mạng (yes/no)
+new_device_alerts = yes
+# Báo rời mạng / quay lại cho: all = mọi thiết bị | unknown = chỉ thiết bị chưa đánh dấu
+# "quen" | none = không báo. Từng thiết bị có thể đặt riêng trên dashboard.
+presence_alerts = all
+# Giờ yên lặng: không báo rời mạng / quay lại trong khoảng này, ví dụ 23:00-07:00.
+# Thiết bị lạ mới vào mạng vẫn được báo. Để trống = không có giờ yên lặng.
+quiet_hours =
 
 [report]
 # Báo cáo danh sách thiết bị online/offline, gửi qua kênh đã đặt ở mục [notify].
@@ -74,13 +87,14 @@ telegram_commands = yes
 # (mục, khoá) -> kiểu. Giá trị mặc định lấy từ TEMPLATE để không phải khai hai nơi.
 KINDS: Dict[Tuple[str, str], str] = {
     ("web", "port"): "port", ("web", "host"): "str", ("web", "open_browser"): "bool",
-    ("web", "enabled"): "bool",
+    ("web", "enabled"): "bool", ("web", "password"): "str", ("web", "language"): "choice:en,vi",
     ("scan", "subnet"): "str", ("scan", "interval"): "positive", ("scan", "offline_after"): "positive",
-    ("scan", "method"): "method", ("scan", "dhcp"): "bool", ("scan", "oui_download"): "bool",
+    ("scan", "method"): "choice:auto,arp,passive", ("scan", "dhcp"): "bool", ("scan", "oui_download"): "bool",
     ("data", "database"): "str", ("data", "log_file"): "str",
     ("notify", "telegram_token"): "str", ("notify", "telegram_chat_id"): "str",
     ("notify", "ntfy_topic"): "str", ("notify", "ntfy_server"): "str",
-    ("notify", "leave_after_minutes"): "number",
+    ("notify", "leave_after_minutes"): "number", ("notify", "new_device_alerts"): "bool",
+    ("notify", "presence_alerts"): "choice:all,unknown,none", ("notify", "quiet_hours"): "hours",
     ("report", "times"): "times", ("report", "interval_minutes"): "nonneg",
     ("report", "offline_days"): "nonneg", ("report", "telegram_commands"): "bool",
 }
@@ -117,10 +131,18 @@ def _convert(section: str, key: str, raw: str, name: str):
         if raw.lower() not in _BOOLS:
             raise ConfigError(f"{where} phải là yes hoặc no")
         return _BOOLS[raw.lower()]
-    if kind == "method":
-        if raw not in ("auto", "arp", "passive"):
-            raise ConfigError(f"{where} phải là auto, arp hoặc passive")
-        return raw
+    if kind.startswith("choice:"):
+        options = kind[7:].split(",")
+        if raw.lower() not in options:
+            raise ConfigError(f"{where} phải là một trong: {', '.join(options)}")
+        return raw.lower()
+    if kind == "hours":
+        if not raw:
+            return None
+        m = re.fullmatch(r"(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})", raw)
+        if not m or int(m[1]) > 23 or int(m[3]) > 23 or int(m[2]) > 59 or int(m[4]) > 59:
+            raise ConfigError(f"{where} phải có dạng 23:00-07:00")
+        return (int(m[1]) * 60 + int(m[2]), int(m[3]) * 60 + int(m[4]))
     if kind == "times":
         times = []
         for part in filter(None, (p.strip() for p in raw.split(","))):
@@ -186,24 +208,57 @@ def ensure(path: str) -> bool:
     return True
 
 
+def _template_sections() -> Dict[str, List[Tuple[str, str]]]:
+    """Mẫu cấu hình tách thành {mục: [(khoá, các dòng chú thích + dòng khoá)]}."""
+    sections: Dict[str, List[Tuple[str, str]]] = {}
+    current, pending = None, []
+    for line in TEMPLATE.split("\n"):
+        header = re.fullmatch(r"\[(\w+)\]", line.strip())
+        if header:
+            current, pending = header.group(1), []
+            sections[current] = []
+        elif current and line.startswith("#"):
+            pending.append(line)
+        elif current and "=" in line:
+            sections[current].append((line.split("=")[0].strip(), "\n".join(pending + [line])))
+            pending = []
+    return sections
+
+
 def upgrade(path: str) -> List[str]:
-    """Thêm vào file cấu hình cũ những mục mà bản afing mới có (kèm chú thích). Trả tên các mục đã thêm."""
+    """Thêm vào file cấu hình cũ những mục và khoá mà bản afing mới có, kèm chú thích.
+
+    Không đụng tới giá trị hay chú thích sẵn có. Trả danh sách "[mục]" / "mục.khoá" đã thêm.
+    """
     if not os.path.exists(path):
         return []
     with open(path, encoding="utf-8-sig") as f:
-        text = f.read()
-    have = {m.lower() for m in re.findall(r"^\s*\[([^\]]+)\]\s*$", text, re.M)}
-    blocks = re.split(r"(?m)^(?=\[)", TEMPLATE)[1:]  # mỗi khối bắt đầu bằng dòng [tên mục]
+        lines = f.read().split("\n")
     added = []
-    for block in blocks:
-        name = block[1:block.index("]")]
-        if name.lower() not in have:
-            text = text.rstrip("\n") + "\n\n" + block.rstrip("\n") + "\n"
-            added.append(name)
+    for section, entries in _template_sections().items():
+        start = next((i for i, line in enumerate(lines)
+                      if line.strip().lower() == f"[{section}]"), None)
+        if start is None:
+            while lines and not lines[-1].strip():
+                lines.pop()
+            lines += ["", f"[{section}]"] + [block for _, block in entries] + [""]
+            added.append(f"[{section}]")
+            continue
+        end = next((i for i in range(start + 1, len(lines))
+                    if re.match(r"\s*\[.*\]\s*$", lines[i])), len(lines))
+        have = {line.split("=")[0].split(":")[0].strip().lower()
+                for line in lines[start + 1:end] if not line.lstrip().startswith(("#", ";"))}
+        while end > start + 1 and not lines[end - 1].strip():
+            end -= 1
+        for key, block in entries:
+            if key.lower() not in have:
+                lines[end:end] = block.split("\n")
+                end += block.count("\n") + 1
+                added.append(f"{section}.{key}")
     if added:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-            f.write(text)
+            f.write("\n".join(lines))
         os.replace(tmp, path)
     return added
 

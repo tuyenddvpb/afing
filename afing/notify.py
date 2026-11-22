@@ -12,11 +12,12 @@ import logging
 import os
 import secrets
 import threading
+import time
 import urllib.error
 import urllib.request
 from typing import Callable, Dict, List, Optional, Tuple
 
-from . import alias, config
+from . import alias, config, i18n
 
 log = logging.getLogger("afing.notify")
 
@@ -123,18 +124,26 @@ def split_message(text: str, limit: int = 3500) -> List[str]:
     return parts + [current] if current else parts
 
 
-def send(cfg: dict, text: str) -> List[Tuple[str, Optional[str]]]:
-    """Gửi `text` qua mọi kênh đã cấu hình. Trả [(kênh, lỗi hoặc None)]."""
+def send(cfg: dict, text: str, buttons: Optional[list] = None) -> List[Tuple[str, Optional[str]]]:
+    """Gửi `text` qua mọi kênh đã cấu hình. Trả [(kênh, lỗi hoặc None)].
+
+    `buttons` là các hàng nút bấm [[(nhãn, dữ liệu), ...], ...] hiện dưới tin (chỉ Telegram).
+    """
     results = []
     for channel in channels(cfg):
         try:
-            for part in split_message(text, 3500 if channel == "telegram" else 1200):
+            parts = split_message(text, 3500 if channel == "telegram" else 1200)
+            for index, part in enumerate(parts):
                 if channel == "telegram":
                     tg = cfg["telegram"]
+                    payload = {"chat_id": tg["chat_id"], "text": part,
+                               "disable_web_page_preview": True}
+                    if buttons and index == len(parts) - 1:
+                        payload["reply_markup"] = {"inline_keyboard": [
+                            [{"text": label, "callback_data": data} for label, data in row]
+                            for row in buttons]}
                     _post(f"{TELEGRAM_API}/bot{tg['token']}/sendMessage",
-                          json.dumps({"chat_id": tg["chat_id"], "text": part,
-                                      "disable_web_page_preview": True}).encode(),
-                          {"Content-Type": "application/json"})
+                          json.dumps(payload).encode(), {"Content-Type": "application/json"})
                 else:
                     nt = cfg["ntfy"]
                     server = (nt.get("server") or NTFY_SERVER).rstrip("/")
@@ -161,12 +170,35 @@ def telegram_find_chat(token: str) -> Optional[Tuple[int, str]]:
 
 # ---------- nội dung ----------
 
-def describe_device(dev: dict) -> str:
+def rules(path: str) -> dict:
+    """Quy tắc thông báo và ngôn ngữ từ afing.cfg; file hỏng thì dùng mặc định."""
+    try:
+        cfg = config.load(path)
+    except config.ConfigError:
+        return {"language": "en", "new_device_alerts": True, "presence_alerts": "all",
+                "quiet_hours": None}
+    return {"language": cfg[("web", "language")],
+            "new_device_alerts": cfg[("notify", "new_device_alerts")],
+            "presence_alerts": cfg[("notify", "presence_alerts")],
+            "quiet_hours": cfg[("notify", "quiet_hours")]}
+
+
+def in_quiet_hours(quiet: Optional[Tuple[int, int]], now: float) -> bool:
+    if not quiet:
+        return False
+    local = time.localtime(now)
+    minute = local.tm_hour * 60 + local.tm_min
+    start, end = quiet
+    return start <= minute < end if start <= end else (minute >= start or minute < end)
+
+
+def describe_device(dev: dict, lang: str = "en") -> str:
     name = dev.get("custom_name") or dev.get("hostname")
     head = " ".join(filter(None, (alias.icon(dev.get("alias")), dev.get("alias"))))
     if name:
         head = f"{head} — {name}" if head else name
-    kind = " · ".join(filter(None, (TYPE_LABELS.get(dev.get("device_type")), dev.get("os"))))
+    kind = " · ".join(filter(None, (
+        i18n.type_label(lang, dev.get("custom_type") or dev.get("device_type")), dev.get("os"))))
     if kind:
         head += f" ({kind})"
     detail = " · ".join(filter(None, (dev.get("ip"), dev.get("mac"), dev.get("vendor"))))
@@ -176,62 +208,100 @@ def describe_device(dev: dict) -> str:
 class Notifier:
     """Biến các sự kiện của từng lượt quét thành thông báo.
 
-    Thiết bị chập chờn (điện thoại ngủ, sóng yếu) không gây báo liên tục: chỉ báo "rời mạng" khi
-    thiết bị vắng mặt liên tục `leave_after_minutes` phút, và chỉ báo "quay lại" cho thiết bị đã
-    được báo rời mạng.
+    - Thiết bị chập chờn (điện thoại ngủ, sóng yếu) không gây báo liên tục: chỉ báo "rời mạng"
+      khi thiết bị vắng mặt liên tục `leave_after_minutes` phút, và chỉ báo "quay lại" cho thiết
+      bị đã được báo rời mạng.
+    - Báo rời mạng / quay lại theo `presence_alerts` (all | unknown | none), giờ yên lặng, và
+      thiết lập riêng của từng thiết bị (alert = always | never).
+    - Thiết bị mới luôn được báo (trừ khi tắt `new_device_alerts`), kèm nút đánh dấu quen/lạ.
+    - Đang /mute thì không gửi gì.
     """
 
     def __init__(self, config_path: str, devices: Callable[[], List[dict]],
-                 sender: Callable[[dict, str], list] = send):
+                 sender: Callable[..., list] = None,
+                 muted_until: Callable[[], float] = lambda: 0.0):
         self.config_path = config_path
         self._devices = devices
-        self._sender = sender
+        self._sender = sender or send
+        self._muted_until = muted_until
         self._pending_leave: Dict[str, int] = {}  # mac -> thời điểm bắt đầu vắng mặt
+        self._silent_leave: set = set()           # rời mạng nhưng không báo -> quay lại cũng không báo
 
     def active_channels(self) -> List[str]:
         return channels(load_config(self.config_path))
+
+    @staticmethod
+    def _wants_presence(dev: Optional[dict], rule: dict, now: float) -> bool:
+        if not dev or dev.get("alert") == "never":
+            return False
+        if dev.get("alert") == "always":
+            return True
+        mode = rule["presence_alerts"]
+        if mode == "none" or (mode == "unknown" and dev.get("known")):
+            return False
+        return not in_quiet_hours(rule["quiet_hours"], now)
 
     def process(self, events: List[dict], now: int, network: str = "") -> List[str]:
         """Xử lý sự kiện của một lượt quét; trả các dòng thông báo đã gửi đi (để test)."""
         cfg = load_config(self.config_path)
         if not channels(cfg):
             self._pending_leave.clear()
+            self._silent_leave.clear()
             return []
+        rule = rules(self.config_path)
+        lang = rule["language"]
         leave_after = float(cfg.get("leave_after_minutes", DEFAULT_LEAVE_MINUTES)) * 60
         devices = {d["mac"]: d for d in self._devices()}
         new = [e for e in events if e["type"] == "new"]
 
-        lines = []
+        messages: List[Tuple[str, Optional[list]]] = []  # (nội dung, nút bấm)
+        plain: List[str] = []
         if len(new) > 1 and len(new) == len(devices):
             # Lượt quét đầu tiên trên một database trống: gộp thành một tin thay vì báo từng máy.
-            lines.append(f"✅ afing is now watching {network or 'your network'}: "
-                         f"{len(new)} devices found.")
+            plain.append(i18n.t(lang, "watching", network=network or i18n.t(lang, "your_network"),
+                                count=len(new)))
             new = []
-        for ev in new:
-            lines.append("🆕 New device\n" + describe_device(devices.get(ev["mac"], ev)))
+        if rule["new_device_alerts"]:
+            for ev in new:
+                text = i18n.t(lang, "new_device") + "\n" + describe_device(devices.get(ev["mac"], ev), lang)
+                buttons = [[(i18n.t(lang, "btn_known"), f"known:{ev['mac']}"),
+                            (i18n.t(lang, "btn_unknown"), f"unknown:{ev['mac']}")]]
+                messages.append((text, buttons))
         for ev in events:
             mac = ev["mac"]
             if ev["type"] == "offline":
                 self._pending_leave[mac] = ev["ts"]
             elif ev["type"] == "online":
-                if self._pending_leave.pop(mac, None) is None:
-                    lines.append("🟢 Back online\n" + describe_device(devices.get(mac, ev)))
+                if self._pending_leave.pop(mac, None) is not None:
+                    continue  # chập chờn: chưa kịp báo rời mạng
+                if mac in self._silent_leave:
+                    self._silent_leave.discard(mac)
+                elif self._wants_presence(devices.get(mac), rule, now):
+                    plain.append(i18n.t(lang, "back") + "\n" + describe_device(devices[mac], lang))
         for mac, since in list(self._pending_leave.items()):
             if now - since >= leave_after:
                 del self._pending_leave[mac]
                 dev = devices.get(mac)
-                if dev and not dev["is_online"]:
-                    lines.append("🔴 Left the network\n" + describe_device(dev))
+                if not dev or dev["is_online"]:
+                    continue
+                if self._wants_presence(dev, rule, now):
+                    plain.append(i18n.t(lang, "left") + "\n" + describe_device(dev, lang))
+                else:
+                    self._silent_leave.add(mac)
 
-        if lines:
-            text = "\n\n".join(lines)
-            threading.Thread(target=self._deliver, args=(cfg, text), daemon=True).start()
+        lines = plain + [text for text, _ in messages]
+        if plain:
+            messages.insert(0, ("\n\n".join(plain), None))
+        if not messages or now < self._muted_until():
+            return []
+        threading.Thread(target=self._deliver, args=(cfg, messages), daemon=True).start()
         return lines
 
-    def _deliver(self, cfg: dict, text: str) -> None:
-        for channel, error in self._sender(cfg, text):
-            if error:
-                log.warning("Không gửi được thông báo qua %s: %s", channel, error)
+    def _deliver(self, cfg: dict, messages: List[Tuple[str, Optional[list]]]) -> None:
+        for text, buttons in messages:
+            for channel, error in self._sender(cfg, text, buttons=buttons):
+                if error:
+                    log.warning("Không gửi được thông báo qua %s: %s", channel, error)
 
 
 # ---------- cài đặt qua dòng lệnh ----------
@@ -278,7 +348,7 @@ def test(config_path: str, out: Callable[[str], None] = print) -> int:
         out("Chưa cấu hình kênh thông báo nào. Chạy lệnh notify-setup trước.")
         return 1
     failed = False
-    for channel, error in send(cfg, "✅ afing test notification. Alerts are working."):
+    for channel, error in send(cfg, i18n.t(rules(config_path)["language"], "test")):
         out(f"  {channel}: " + (f"LỖI - {error}" if error else "đã gửi, hãy kiểm tra điện thoại"))
         failed = failed or bool(error)
     return 1 if failed else 0

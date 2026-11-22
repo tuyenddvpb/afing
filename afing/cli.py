@@ -156,8 +156,9 @@ def load_settings(argv, double_clicked: bool = False):
     if args.command in ("run", "install-autostart", "notify-setup"):
         if config.ensure(cfg_path):
             print(f"Đã tạo file cấu hình mẫu: {cfg_path}")
-        for section in config.upgrade(cfg_path):
-            print(f"Đã thêm mục [{section}] mới vào {cfg_path}")
+        added = config.upgrade(cfg_path)
+        if added:
+            print(f"Đã thêm thiết lập mới vào {cfg_path}: {', '.join(added)}")
     settings = config.load(cfg_path)
 
     explicit = {}
@@ -280,18 +281,19 @@ def run(argv, double_clicked: bool = False) -> int:
 
     db = Database(args.db)
     monitor = Monitor(net, scanner, db, oui, args.interval, args.offline_after)
-    monitor.notifier = notify.Notifier(notify_path, db.devices)
+    monitor.notifier = notify.Notifier(
+        notify_path, db.devices, muted_until=lambda: float(db.get_state("mute_until", "0") or 0))
     active = monitor.notifier.active_channels()
     log.info("Thông báo: %s", ", ".join(active) if active else "tắt (bật bằng lệnh notify-setup)")
     monitor.reporter = report.Reporter(cfg_path, db.devices, str(net.network),
                                        online_since=db.online_since)
-    commands = report.TelegramCommands(cfg_path, monitor.reporter).start()
+    commands = report.TelegramCommands(cfg_path, monitor.reporter, db).start()
     rs = report.settings(cfg_path)
     when = [f"{h:02d}:{m:02d}" for h, m in rs["times"]]
     if rs["interval_minutes"]:
         when.append(f"mỗi {rs['interval_minutes']:g} phút")
     log.info("Báo cáo định kỳ: %s | lệnh qua bot Telegram: %s", ", ".join(when) or "tắt",
-             "bật (/report, /online, /offline)" if rs["telegram_commands"] and "telegram" in active
+             "bật (/help để xem lệnh)" if rs["telegram_commands"] and "telegram" in active
              else "tắt")
     listener = None
     if not args.no_dhcp:
@@ -308,7 +310,7 @@ def run(argv, double_clicked: bool = False) -> int:
                 thread.join(1)
         else:
             try:
-                server = make_server(args.host, args.port, db, monitor)
+                server = make_server(args.host, args.port, db, monitor, cfg_path, args.log_file)
             except OSError as e:
                 print(f"Lỗi: không mở được cổng web {args.port} ({e.strerror or e}). "
                       f"afing đang chạy sẵn? Đổi cổng ở mục [web] trong {cfg_path}.")

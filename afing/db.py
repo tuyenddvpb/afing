@@ -19,6 +19,11 @@ CREATE TABLE IF NOT EXISTS devices (
     device_type TEXT,             -- mã loại suy đoán (xem classify.TYPES)
     os          TEXT,             -- hệ điều hành suy đoán
     name_rank   INTEGER,          -- độ tin cậy của hostname: 3 mDNS/UPnP, 2 DHCP, 1 DNS/NetBIOS
+    custom_type TEXT,             -- loại do người dùng chọn (ưu tiên hơn device_type)
+    known       INTEGER NOT NULL DEFAULT 0,  -- 1 = người dùng đã xác nhận là thiết bị quen
+    person      TEXT,             -- thiết bị này của ai (để biết ai đang ở nhà)
+    notes       TEXT,
+    alert       TEXT,             -- NULL = theo thiết lập chung | 'always' | 'never'
     is_online   INTEGER NOT NULL DEFAULT 1,
     is_self     INTEGER NOT NULL DEFAULT 0,
     is_gateway  INTEGER NOT NULL DEFAULT 0,
@@ -34,6 +39,10 @@ CREATE TABLE IF NOT EXISTS events (
     detail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+CREATE TABLE IF NOT EXISTS state (     -- vài giá trị trạng thái nhỏ (vd tắt thông báo tới lúc nào)
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 CREATE TABLE IF NOT EXISTS dhcp_clients (  -- thông tin nghe được từ gói DHCP, theo MAC
     mac          TEXT PRIMARY KEY,
     hostname     TEXT,
@@ -54,7 +63,10 @@ class Database:
             self._conn.executescript(SCHEMA)
             columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(devices)")}
             for column, kind in (("model", "TEXT"), ("device_type", "TEXT"), ("os", "TEXT"),
-                                 ("name_rank", "INTEGER"), ("alias", "TEXT")):  # DB tạo từ bản cũ
+                                 ("name_rank", "INTEGER"), ("alias", "TEXT"),
+                                 ("custom_type", "TEXT"), ("known", "INTEGER NOT NULL DEFAULT 0"),
+                                 ("person", "TEXT"), ("notes", "TEXT"),
+                                 ("alert", "TEXT")):  # DB tạo từ bản cũ
                 if column not in columns:
                     self._conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {kind}")
             self._migrate_labels()
@@ -190,9 +202,108 @@ class Database:
             )
             return cur.rowcount > 0
 
+    EDITABLE = ("custom_name", "custom_type", "person", "notes", "alert", "known")
+
+    def update_device(self, mac: str, fields: Dict[str, object]) -> bool:
+        """Sửa các trường người dùng được phép sửa. Chuỗi rỗng được lưu thành NULL."""
+        fields = {k: v for k, v in fields.items() if k in self.EDITABLE}
+        if not fields:
+            return self.device(mac) is not None
+        values = [int(bool(v)) if k == "known" else (v or None) for k, v in fields.items()]
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                f"UPDATE devices SET {', '.join(k + '=?' for k in fields)} WHERE mac=?",
+                (*values, mac))
+            return cur.rowcount > 0
+
+    def mark_all_known(self) -> int:
+        with self._lock, self._conn:
+            return self._conn.execute("UPDATE devices SET known=1 WHERE known=0").rowcount
+
+    def delete_device(self, mac: str) -> bool:
+        """Xoá thiết bị cùng lịch sử của nó. Nếu nó còn trong mạng, lượt quét sau sẽ thấy lại như mới."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM events WHERE mac=?", (mac,))
+            self._conn.execute("DELETE FROM dhcp_clients WHERE mac=?", (mac,))
+            return self._conn.execute("DELETE FROM devices WHERE mac=?", (mac,)).rowcount > 0
+
+    def merge_devices(self, source: str, target: str) -> bool:
+        """Gộp `source` (dòng cũ, vd MAC trước khi đổi) vào `target` (dòng giữ lại).
+
+        `target` nhận bí danh, tên, loại, người dùng, ghi chú, trạng thái quen và lịch sử của
+        `source`; `source` bị xoá. Trường nào `source` để trống thì giữ giá trị của `target`.
+        """
+        if source == target:
+            return False
+        with self._lock, self._conn:
+            c = self._conn
+            src = c.execute("SELECT * FROM devices WHERE mac=?", (source,)).fetchone()
+            dst = c.execute("SELECT * FROM devices WHERE mac=?", (target,)).fetchone()
+            if not src or not dst:
+                return False
+            c.execute("UPDATE events SET mac=? WHERE mac=?", (target, source))
+            c.execute("DELETE FROM dhcp_clients WHERE mac=?", (source,))
+            c.execute("DELETE FROM devices WHERE mac=?", (source,))  # nhả bí danh (cột là duy nhất)
+            c.execute(
+                "UPDATE devices SET alias=?, custom_name=COALESCE(?, custom_name),"
+                " custom_type=COALESCE(?, custom_type), person=COALESCE(?, person),"
+                " notes=COALESCE(?, notes), alert=COALESCE(?, alert), known=MAX(known, ?),"
+                " first_seen=MIN(first_seen, ?) WHERE mac=?",
+                (src["alias"], src["custom_name"], src["custom_type"], src["person"],
+                 src["notes"], src["alert"], src["known"], src["first_seen"], target))
+            return True
+
     def devices(self) -> List[dict]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM devices").fetchall()
+        return [dict(r) for r in rows]
+
+    def device(self, mac: str) -> Optional[dict]:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM devices WHERE mac=?", (mac,)).fetchone()
+        return dict(row) if row else None
+
+    def device_events(self, mac: str, limit: int = 200) -> List[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM events WHERE mac=? ORDER BY id DESC LIMIT ?", (mac, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def sessions(self, mac: str, since: int, now: int) -> List[List[int]]:
+        """Các quãng online của thiết bị từ `since` tới `now`: [[bắt đầu, kết thúc], ...]."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT ts, type FROM events WHERE mac=? AND type IN ('new','online','offline')"
+                " ORDER BY id", (mac,)).fetchall()
+            dev = self._conn.execute("SELECT is_online FROM devices WHERE mac=?", (mac,)).fetchone()
+        spans, start = [], None
+        for r in rows:
+            if r["type"] == "offline":
+                if start is not None:
+                    spans.append([start, r["ts"]])
+                    start = None
+            elif start is None:
+                start = r["ts"]
+        if start is not None and dev and dev["is_online"]:
+            spans.append([start, now])
+        return [[max(a, since), b] for a, b in spans if b > since]
+
+    def get_state(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_state(self, key: str, value: Optional[str]) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("INSERT INTO state (key, value) VALUES (?, ?)"
+                               " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+
+    def all_events(self) -> List[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT e.ts, e.type, e.mac, e.ip, e.detail, d.alias,"
+                " COALESCE(d.custom_name, d.hostname) AS name"
+                " FROM events e LEFT JOIN devices d ON d.mac = e.mac ORDER BY e.id").fetchall()
         return [dict(r) for r in rows]
 
     def online_since(self) -> Dict[str, int]:
