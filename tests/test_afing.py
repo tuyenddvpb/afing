@@ -1,5 +1,6 @@
 import ipaddress
 import json
+import re
 import os
 import struct
 import tempfile
@@ -73,6 +74,32 @@ class ParserTests(unittest.TestCase):
             "192.168.1.1": "a4:91:b1:11:22:33",
             "192.168.1.7": "00:1c:42:00:00:08",
         })
+
+    def test_confirm_present_drops_devices_that_no_longer_answer(self):
+        table = {"10.0.0.1": "aa:aa:aa:aa:aa:01", "10.0.0.2": "aa:aa:aa:aa:aa:02",
+                 "10.0.0.3": "aa:aa:aa:aa:aa:03"}
+
+        def probe(ip):
+            if ip == "10.0.0.2":
+                return None                      # đã rời mạng, chỉ còn trong cache
+            if ip == "10.0.0.3":
+                raise OSError("API lỗi")          # không hỏi được: giữ theo bảng ARP
+            return "bb:bb:bb:bb:bb:01"            # trả lời với MAC hiện tại
+
+        self.assertEqual(scanner.confirm_present(table, probe),
+                         {"10.0.0.1": "bb:bb:bb:bb:bb:01", "10.0.0.3": "aa:aa:aa:aa:aa:03"})
+        self.assertEqual(scanner.confirm_present({}, probe), {})
+
+    @unittest.skipUnless(os.name == "nt", "SendARP chỉ có trên Windows")
+    def test_send_arp_on_real_windows(self):
+        net = netinfo.detect()
+        if net.gateway:
+            mac = scanner.send_arp(net.gateway)
+            print("SendARP gateway", net.gateway, "->", mac)
+            self.assertTrue(mac is None or re.fullmatch(r"([0-9a-f]{2}:){5}[0-9a-f]{2}", mac))
+        found = scanner.Scanner(net, "passive").scan()
+        print("Windows scan found", found)
+        self.assertIsInstance(found, dict)
 
     def test_netmask_parsers(self):
         linux = "2: wlan0    inet 192.168.1.5/24 brd 192.168.1.255 scope global wlan0\\ valid\n"

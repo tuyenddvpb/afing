@@ -7,11 +7,13 @@ Hai cách:
              hệ điều hành tự phân giải ARP, sau đó đọc bảng ARP của hệ điều hành.
 """
 
+import concurrent.futures
 import ipaddress
 import logging
 import os
 import re
 import socket
+import struct
 import time
 from typing import Dict, Optional
 
@@ -102,6 +104,45 @@ def poke(network: ipaddress.IPv4Network, skip_ip: str) -> None:
         s.close()
 
 
+def send_arp(ip: str) -> Optional[str]:
+    """Windows: gửi một yêu cầu ARP thật tới `ip` (hàm SendARP của hệ điều hành, không cần quyền
+    admin hay Npcap). Trả MAC nếu thiết bị trả lời, None nếu không. Có thể mất vài giây khi
+    thiết bị không còn trong mạng."""
+    import ctypes
+    dest = struct.unpack("<L", socket.inet_aton(ip))[0]
+    buf = (ctypes.c_ubyte * 6)()
+    size = ctypes.c_ulong(6)
+    rc = ctypes.windll.iphlpapi.SendARP(ctypes.c_ulong(dest), ctypes.c_ulong(0),
+                                        ctypes.byref(buf), ctypes.byref(size))
+    if rc != 0 or size.value != 6:
+        return None
+    return norm_mac(":".join(f"{b:02x}" for b in buf))
+
+
+def confirm_present(candidates: Dict[str, str], probe=None) -> Dict[str, str]:
+    """Lọc bảng ARP của Windows: chỉ giữ thiết bị còn trả lời ARP ngay lúc này.
+
+    Bảng ARP của Windows giữ thiết bị đã rời mạng thêm nhiều phút; hỏi lại từng địa chỉ giúp phát
+    hiện rời mạng ngay ở lượt quét kế tiếp. Các địa chỉ được hỏi song song.
+    """
+    probe = probe or send_arp
+    if not candidates:
+        return {}
+    present: Dict[str, str] = {}
+
+    def check(ip):
+        try:
+            return ip, probe(ip)
+        except Exception:
+            return ip, candidates[ip]  # không hỏi được (thiếu API?): tin bảng ARP như trước
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(64, len(candidates))) as pool:
+        for ip, mac in pool.map(check, candidates):
+            if mac:
+                present[ip] = mac
+    return present
+
+
 class Scanner:
     def __init__(self, net: NetInfo, method: str = "auto"):
         self.net = net
@@ -160,8 +201,11 @@ class Scanner:
         poke(self.net.network, self.net.ip)
         time.sleep(0.5)
         network = self.net.network
-        return {
+        found = {
             ip: mac
             for ip, mac in read_arp_table().items()
             if ipaddress.ip_address(ip) in network
         }
+        if SYSTEM == "Windows":
+            found = confirm_present(found)
+        return found
