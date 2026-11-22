@@ -127,7 +127,12 @@ def install(extra_args: List[str], port: int) -> int:
         added = subprocess.run(["reg", "add", RUN_KEY, "/v", TRAY_VALUE, "/t", "REG_SZ",
                                 "/d", f'"{tray}"', "/f"], capture_output=True)
         if added.returncode == 0:
-            subprocess.Popen([tray], close_fds=True)
+            # Tách hẳn khỏi tiến trình này: không thừa hưởng stdin/stdout, kẻo chương trình gọi
+            # lệnh cài (bộ cài, script) phải chờ tới khi biểu tượng khay thoát.
+            flags = getattr(subprocess, "DETACHED_PROCESS", 0) | \
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            subprocess.Popen([tray], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
             print("Đã bật biểu tượng afing ở khay hệ thống (cạnh đồng hồ).")
     print("Gỡ bỏ bằng lệnh: uninstall-autostart")
     return 0
