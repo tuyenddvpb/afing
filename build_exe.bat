@@ -3,7 +3,7 @@ rem Build afing tren Windows. Yeu cau: Python 3.9+ (co pip).
 rem Ket qua trong thu muc dist:
 rem   afing.exe        chuong trinh chinh
 rem   afing-tray.exe   bieu tuong khay he thong
-rem   setup.bat        cai / nang cap afing bang cac file tren (bam dup la chay)
+rem   setup.bat        chay giup 2 lenh uninstall-autostart / install-autostart khi nang cap
 rem   afing-setup.exe  bo cai (chi tao khi may co Inno Setup 6: https://jrsoftware.org/isdl.php)
 cd /d "%~dp0"
 
@@ -27,7 +27,7 @@ echo.
 echo Xong. Cac file nam trong thu muc dist:
 dir /b dist\*.exe dist\setup.bat
 echo.
-echo De cai hoac nang cap afing tren may nay: bam dup dist\setup.bat
+echo De nang cap: chep setup.bat vao thu muc afing (mot lan), bam dup no, roi chep exe moi khi duoc nhac.
 exit /b 0
 
 :error
