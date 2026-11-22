@@ -129,6 +129,9 @@ File exe phải được build trên Windows. Có hai cách:
 - **Trên máy bạn:** bấm đúp `build_exe.bat` (cần Python 3.9+). Script cài PyInstaller, chạy test,
   rồi tạo trong thư mục `dist`: `afing.exe`, `afing-tray.exe` (biểu tượng khay hệ thống), và
   `afing-setup.exe` nếu máy có [Inno Setup 6](https://jrsoftware.org/isdl.php).
+  Kèm theo là `dist\setup.bat`: bấm đúp để cài hoặc nâng cấp afing trên chính máy đó. Nó tự xin
+  quyền admin, hỏi thư mục cài đặt (lần sau nhớ lại), dừng bản đang chạy nền, chép file exe mới
+  vào, rồi đăng ký tự chạy lại. `afing.cfg` và `afing.db` được giữ nguyên.
 - **Để GitHub build:** workflow "Build Windows exe" chạy khi đẩy một tag dạng `v1.0` (hoặc bấm Run
   workflow trong tab Actions) và tạo bản phát hành kèm các file trên.
 
