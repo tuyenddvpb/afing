@@ -50,13 +50,13 @@ SERVICES: List[Tuple[str, object, Optional[str]]] = [
 
 # ---------- mDNS service discovery ----------
 
-def build_browse_query(services: Iterable[str]) -> bytes:
-    """Một gói hỏi PTR cho nhiều loại dịch vụ, yêu cầu trả lời unicast."""
+def build_browse_query(services: Iterable[str], unicast_reply: bool = True) -> bytes:
+    """Một gói hỏi PTR cho nhiều loại dịch vụ; mặc định yêu cầu trả lời unicast."""
     questions = b""
     count = 0
     for name in services:
         questions += b"".join(bytes([len(p)]) + p.encode() for p in name.split(".")) + b"\0"
-        questions += struct.pack("!2H", TYPE_PTR, 0x8001)
+        questions += struct.pack("!2H", TYPE_PTR, 0x8001 if unicast_reply else 1)
         count += 1
     return struct.pack("!6H", 0, 0, count, 0, 0, 0) + questions
 
@@ -171,6 +171,66 @@ def mdns_services(local_ip: str, wait: float = 3.0) -> Dict[str, Dict[str, str]]
         if info:
             found[ip] = info
     return found
+
+
+META_QUERY = "_services._dns-sd._udp.local"  # "hãy kể mọi loại dịch vụ bạn có"
+
+
+def mdns_probe(local_ip: str, wait: float = 12.0, include_self: bool = False) -> Tuple[Dict[str, Tuple[list, dict]], bool]:
+    """Chẩn đoán: thu MỌI bản ghi mDNS nghe được trong `wait` giây, theo IP nguồn.
+
+    Nghe theo hai đường cùng lúc: (1) hỏi từ cổng ngẫu nhiên, nhận trả lời unicast - cách afing
+    vẫn dùng khi quét; (2) tham gia nhóm multicast ở cổng 5353 như một thiết bị mDNS thật, nên
+    thấy cả các gói thiết bị tự loan báo. Trả ({ip: (ptrs, txts)}, đường 2 có mở được không).
+    """
+    names_ = [s[0] for s in SERVICES] + [META_QUERY, "_rdlink._tcp.local"]
+    per_ip: Dict[str, Tuple[list, dict]] = {}
+    socks = []
+    uni = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    socks.append((uni, build_browse_query(names_, unicast_reply=True)))
+    joined = False
+    multi = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        multi.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, "SO_REUSEPORT"):
+            multi.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        multi.bind(("", 5353))
+        multi.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+                         socket.inet_aton(MDNS_ADDR[0]) + socket.inet_aton(local_ip))
+        socks.append((multi, build_browse_query(names_, unicast_reply=False)))
+        joined = True
+    except OSError:
+        multi.close()
+    try:
+        for s, _ in socks:
+            s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(local_ip))
+            s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
+            s.settimeout(0.2)
+        start = time.monotonic()
+        send_at = [0.0, 1.0, 3.0, 6.0]
+        while (elapsed := time.monotonic() - start) < wait:
+            if send_at and elapsed >= send_at[0]:
+                send_at.pop(0)
+                for s, query in socks:
+                    try:
+                        s.sendto(query, MDNS_ADDR)
+                    except OSError:
+                        pass
+            for s, _ in socks:
+                try:
+                    data, (src, _port) = s.recvfrom(9000)
+                except OSError:
+                    continue
+                if src == local_ip and not include_self:
+                    continue  # gói của chính máy này
+                ptrs, txts = parse_mdns_packet(data)
+                acc = per_ip.setdefault(src, ([], {}))
+                acc[0].extend(p for p in ptrs if p not in acc[0])
+                acc[1].update(txts)
+    finally:
+        for s, _ in socks:
+            s.close()
+    return per_ip, joined
 
 
 # ---------- UPnP / SSDP ----------

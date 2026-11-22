@@ -191,6 +191,34 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(discovery.parse_mdns_packet(b"\xff" * 30), ([], {}))
         self.assertEqual(discovery.parse_txt(b"\x05ab=cd\x03key\x00\x09AB=second"), {"ab": "cd"})
 
+    def test_probe_hears_multicast_announcement(self):
+        try:
+            local = netinfo.local_ip()
+        except OSError:
+            self.skipTest("không có mạng")
+        svc = [b"_companion-link", b"_tcp", b"local"]
+        inst = ["iPhone của Mẹ".encode()] + svc
+        pkt = self.packet(dns_record(svc, 12, dns_name(inst)),
+                          dns_record(inst, 16, txt_rdata(b"rpMd=iPhone14,5")))
+
+        def announce():
+            time.sleep(0.5)
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(local))
+                s.sendto(pkt, names.MDNS_ADDR)
+            except OSError:
+                pass
+            finally:
+                s.close()
+
+        threading.Thread(target=announce, daemon=True).start()
+        per_ip, joined = discovery.mdns_probe(local, wait=1.5, include_self=True)
+        if not joined:
+            self.skipTest("không mở được cổng 5353")
+        ptrs, txts = per_ip[local]
+        self.assertEqual(discovery.summarize_services(ptrs, txts), {"name": "iPhone của Mẹ"})
+
     def test_ssdp_parsing(self):
         resp = (b"HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nST: upnp:rootdevice\r\n"
                 b"Location: http://192.168.1.20:8060/dial/dd.xml\r\n\r\n")

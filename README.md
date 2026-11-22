@@ -19,6 +19,7 @@ Mở http://localhost:8080. Mặc định afing tự dò subnet của máy, qué
 | `python -m afing` | Quét liên tục, ghi DB, mở web dashboard |
 | `python -m afing scan` | Quét một lần, in bảng ra màn hình |
 | `sudo python -m afing dhcp` | Chỉ nghe và in từng gói DHCP (để thử, xem mục "Nghe DHCP") |
+| `python -m afing mdns` | In mọi thứ nghe được qua mDNS trong 12 giây (để thử) |
 | `python -m afing update-oui` | Tải bảng hãng sản xuất (OUI) mới nhất từ IEEE |
 
 Tuỳ chọn thường dùng (xem đủ bằng `python -m afing --help`):

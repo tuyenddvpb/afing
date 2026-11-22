@@ -12,7 +12,7 @@ from .db import Database
 from .dhcp import DhcpListener, why_unavailable
 from .classify import TYPES
 from .monitor import Monitor, describe
-from .discovery import identify
+from .discovery import identify, mdns_probe, summarize_services
 from .netinfo import detect
 from .oui import OuiTable
 from .scanner import Scanner
@@ -26,9 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="afing", description="Quét và theo dõi thiết bị trong mạng LAN/Wi-Fi."
     )
     p.add_argument("--version", action="version", version=f"afing {__version__}")
-    p.add_argument("command", nargs="?", default="run", choices=["run", "scan", "dhcp", "update-oui"],
+    p.add_argument("command", nargs="?", default="run", choices=["run", "scan", "dhcp", "mdns", "update-oui"],
                    help="run: quét liên tục + web (mặc định) | scan: quét 1 lần rồi in ra |"
-                        " dhcp: chỉ nghe và in gói DHCP (để thử) | update-oui: tải bảng hãng sản xuất")
+                        " dhcp: chỉ nghe và in gói DHCP (để thử) | mdns: in mọi thứ nghe được qua mDNS (để thử) | update-oui: tải bảng hãng sản xuất")
     p.add_argument("--subnet", help="subnet cần quét, vd 192.168.1.0/24 (mặc định: tự dò)")
     p.add_argument("--interval", type=int, default=10, help="số giây giữa 2 lượt quét (10)")
     p.add_argument("--offline-after", type=int, default=45,
@@ -45,6 +45,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-oui-download", action="store_true",
                    help="không tự tải bảng hãng sản xuất từ IEEE ở lần chạy đầu")
     return p
+
+
+def show_mdns(net) -> int:
+    """Lệnh `mdns`: in mọi bản ghi mDNS nghe được, để biết thiết bị nào tự khai những gì."""
+    wait = 12
+    print(f"Đang hỏi và nghe mDNS trong {wait} giây (giữ thiết bị cần thử mở khoá màn hình)...",
+          flush=True)
+    per_ip, joined = mdns_probe(net.ip, wait)
+    print("Nghe nhóm multicast cổng 5353: " + ("được" if joined else "KHÔNG mở được, chỉ nghe "
+          "trả lời trực tiếp"))
+    if not per_ip:
+        print("Không thiết bị nào trả lời mDNS. Nếu trong mạng có máy in, tivi, Apple TV, "
+              "Chromecast... thì có thể tường lửa của máy này đang chặn UDP 5353.")
+        return 0
+    for ip in sorted(per_ip, key=ipaddress.ip_address):
+        ptrs, txts = per_ip[ip]
+        info = summarize_services(ptrs, txts)
+        print(f"\n{ip}   tên={info.get('name', '-')}   model={info.get('model', '-')}")
+        for service, target in sorted(set(ptrs)):
+            print(f"    {service}  ->  {target}")
+        for name, txt in sorted(txts.items()):
+            shown = ", ".join(f"{k}={v[:40]}" for k, v in list(txt.items())[:8])
+            print(f"    TXT {name}: {shown}")
+    print(f"\n{len(per_ip)} thiết bị trả lời mDNS")
+    return 0
 
 
 def listen_dhcp(oui: OuiTable) -> int:
@@ -94,6 +119,9 @@ def main(argv=None) -> int:
         return 1
     log.info("Mạng %s | IP máy này %s | gateway %s | chế độ quét: %s",
              net.network, net.ip, net.gateway or "?", scanner.method)
+
+    if args.command == "mdns":
+        return show_mdns(net)
 
     if args.command == "scan":
         seen = scanner.scan()
