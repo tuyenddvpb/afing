@@ -26,6 +26,28 @@ jobs:
         run: |
           dist\afing.exe --version
           dist\afing.exe scan
+      - name: Test autostart install on real Windows
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory "C:\afing test" | Out-Null
+          Copy-Item dist\afing.exe "C:\afing test\afing.exe"
+          & "C:\afing test\afing.exe" install-autostart
+          if ($LASTEXITCODE) { exit 1 }
+          schtasks /Query /TN afing /V /FO LIST
+          $ok = $false
+          foreach ($i in 1..20) {
+            Start-Sleep 3
+            try { $s = Invoke-RestMethod http://localhost:8080/api/state; $ok = $true; break } catch {}
+          }
+          Get-Content "C:\afing test\afing.log" -ErrorAction SilentlyContinue
+          if (-not $ok) { Write-Error "dashboard did not come up"; exit 1 }
+          "devices: $($s.devices.Count), dhcp listening: $($s.status.dhcp)"
+          if (-not (Test-Path "C:\afing test\afing.db")) { Write-Error "no database next to exe"; exit 1 }
+          & "C:\afing test\afing.exe" uninstall-autostart
+          if ($LASTEXITCODE) { exit 1 }
+          schtasks /Query /TN afing 2>$null
+          if ($LASTEXITCODE -eq 0) { Write-Error "task still exists"; exit 1 }
+          exit 0
       - uses: actions/upload-artifact@v4
         with:
           name: afing-windows

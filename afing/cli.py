@@ -3,6 +3,7 @@
 import argparse
 import ipaddress
 import logging
+import logging.handlers
 import os
 import sys
 import threading
@@ -10,7 +11,7 @@ import time
 import traceback
 import webbrowser
 
-from . import __version__
+from . import __version__, autostart
 from .db import Database
 from .dhcp import DhcpListener, why_unavailable
 from .classify import TYPES
@@ -39,9 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
         prog="afing", description="Quét và theo dõi thiết bị trong mạng LAN/Wi-Fi."
     )
     p.add_argument("--version", action="version", version=f"afing {__version__}")
-    p.add_argument("command", nargs="?", default="run", choices=["run", "scan", "dhcp", "mdns", "update-oui"],
+    p.add_argument("command", nargs="?", default="run", choices=["run", "scan", "dhcp", "mdns", "update-oui",
+                            "install-autostart", "uninstall-autostart"],
                    help="run: quét liên tục + web (mặc định) | scan: quét 1 lần rồi in ra |"
-                        " dhcp: chỉ nghe và in gói DHCP (để thử) | mdns: in mọi thứ nghe được qua mDNS (để thử) | update-oui: tải bảng hãng sản xuất")
+                        " dhcp: chỉ nghe và in gói DHCP (để thử) | mdns: in mọi thứ nghe được qua mDNS (để thử) | update-oui: tải bảng hãng sản xuất |"
+                        " install-autostart / uninstall-autostart: bật / tắt tự chạy khi Windows"
+                        " khởi động (cần quyền admin)")
     p.add_argument("--subnet", help="subnet cần quét, vd 192.168.1.0/24 (mặc định: tự dò)")
     p.add_argument("--interval", type=int, default=10, help="số giây giữa 2 lượt quét (10)")
     p.add_argument("--offline-after", type=int, default=45,
@@ -54,6 +58,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="địa chỉ web lắng nghe; dùng 0.0.0.0 để máy khác trong LAN xem được")
     p.add_argument("--port", type=int, default=8080, help="cổng web (8080)")
     p.add_argument("--no-web", action="store_true", help="chỉ quét và ghi DB, không mở web")
+    p.add_argument("--wait-network", action="store_true",
+                   help="chưa có mạng thì chờ và thử lại thay vì thoát (dùng khi tự chạy lúc khởi động)")
+    p.add_argument("--log-file", help="ghi thêm log ra file này (tự xoay vòng khi quá 1 MB)")
     p.add_argument("--open-browser", action="store_true",
                    help="tự mở dashboard bằng trình duyệt mặc định khi khởi động")
     p.add_argument("--no-dhcp", action="store_true",
@@ -139,7 +146,27 @@ def main(argv=None) -> int:
 
 def run(argv) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    handlers = [logging.StreamHandler()]
+    if args.log_file:
+        handlers.append(logging.handlers.RotatingFileHandler(
+            args.log_file, maxBytes=1_000_000, backupCount=2, encoding="utf-8"))
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
+                        datefmt="%Y-%m-%d %H:%M:%S" if args.log_file else "%H:%M:%S",
+                        handlers=handlers)
+
+    if args.command == "uninstall-autostart":
+        return autostart.uninstall()
+    if args.command == "install-autostart":
+        data_dir = os.path.dirname(os.path.abspath(args.db))
+        extra = ["--db", os.path.abspath(args.db), "--log-file", os.path.join(data_dir, "afing.log"),
+                 "--host", args.host, "--port", str(args.port)]
+        if args.subnet:
+            extra += ["--subnet", args.subnet]
+        if args.interval != 10:
+            extra += ["--interval", str(args.interval)]
+        if args.no_dhcp:
+            extra.append("--no-dhcp")
+        return autostart.install(extra, args.port)
 
     oui = OuiTable(os.path.join(os.path.dirname(os.path.abspath(args.db)), "oui.csv"))
 
@@ -150,12 +177,23 @@ def run(argv) -> int:
     if args.command == "dhcp":
         return listen_dhcp(oui)
 
-    try:
-        net = detect(args.subnet)
-        scanner = Scanner(net, args.method)
-    except (RuntimeError, ValueError) as e:
-        print(f"Lỗi: {e}")
-        return 1
+    waiting = False
+    while True:
+        try:
+            net = detect(args.subnet)
+            scanner = Scanner(net, args.method)
+            break
+        except ValueError as e:
+            print(f"Lỗi: {e}")
+            return 1
+        except RuntimeError as e:
+            if not (args.wait_network and args.command == "run"):
+                print(f"Lỗi: {e}")
+                return 1
+            if not waiting:
+                log.info("Chưa có mạng, sẽ thử lại mỗi 10 giây...")
+                waiting = True
+            time.sleep(10)
     log.info("Mạng %s | IP máy này %s | gateway %s | chế độ quét: %s",
              net.network, net.ip, net.gateway or "?", scanner.method)
 

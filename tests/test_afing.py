@@ -11,7 +11,7 @@ import urllib.request
 import socket
 import time
 
-from afing import alias, dhcp, discovery, names, netinfo, scanner
+from afing import alias, autostart, dhcp, discovery, names, netinfo, scanner
 from afing.classify import TYPES, classify
 from afing.monitor import describe
 from afing.db import Database
@@ -556,6 +556,34 @@ class AliasTests(unittest.TestCase):
             db = Database(path)                               # mở lại: không gán lại
             self.assertEqual([d["alias"] for d in db.devices()], got)
             db.close()
+
+
+class AutostartTests(unittest.TestCase):
+    def test_launch_command(self):
+        exe = r"C:\Tools\My Apps\afing.exe"
+        extra = ["--db", r"C:\Tools\My Apps\afing.db", "--port", "8080"]
+        self.assertEqual(autostart.launch_command(extra, True, exe, r"C:\x"), (
+            exe, r'run --wait-network --db "C:\Tools\My Apps\afing.db" --port 8080',
+            os.path.dirname(exe)))
+        cmd, args, workdir = autostart.launch_command([], False, r"C:\Py\python.exe", r"C:\src\afing")
+        self.assertEqual((cmd, args, workdir),
+                         (r"C:\Py\python.exe", "-m afing run --wait-network", r"C:\src\afing"))
+
+    def test_task_xml_is_well_formed_and_escaped(self):
+        import xml.etree.ElementTree as ET
+        xml = autostart.build_xml(r"C:\A&B\afing.exe", 'run --db "C:\A&B\<x>.db"', r"C:\A&B")
+        root = ET.fromstring(xml.encode("utf-16"))
+        ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+        self.assertEqual(root.find(".//t:Command", ns).text, r"C:\A&B\afing.exe")
+        self.assertEqual(root.find(".//t:Arguments", ns).text, 'run --db "C:\A&B\<x>.db"')
+        self.assertEqual(root.find(".//t:ExecutionTimeLimit", ns).text, "PT0S")   # không giới hạn
+        self.assertEqual(root.find(".//t:UserId", ns).text, "S-1-5-18")           # SYSTEM
+        self.assertIsNotNone(root.find(".//t:BootTrigger", ns))
+
+    @unittest.skipIf(os.name == "nt", "chỉ kiểm tra thông báo trên hệ khác Windows")
+    def test_refuses_on_non_windows(self):
+        self.assertEqual(autostart.install([], 8080), 1)
+        self.assertEqual(autostart.uninstall(), 1)
 
 
 class OuiTests(unittest.TestCase):

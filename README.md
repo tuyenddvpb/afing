@@ -57,6 +57,28 @@ Dùng trên máy đích:
 - Các lệnh khác vẫn dùng được từ terminal: `afing.exe scan`, `afing.exe mdns`,
   `afing.exe --host 0.0.0.0`...
 
+### Tự chạy khi Windows khởi động
+
+Mở Command Prompt bằng "Run as administrator" tại thư mục chứa `afing.exe` rồi chạy:
+
+```
+afing.exe install-autostart
+```
+
+Lệnh này tạo một tác vụ tên `afing` trong Task Scheduler và chạy nó ngay. Từ đó afing tự chạy
+nền mỗi khi máy bật hoặc khởi động lại, không cần ai đăng nhập, không hiện cửa sổ, có sẵn quyền
+admin (nghe được DHCP), tự chờ tới khi có mạng và tự chạy lại nếu bị lỗi. Dashboard vẫn ở
+http://localhost:8080; log ghi vào `afing.log` cạnh file exe.
+
+- Muốn máy khác trong LAN xem được dashboard: `afing.exe install-autostart --host 0.0.0.0`
+  (chạy lại lệnh để đổi cấu hình).
+- Tắt tự chạy: `afing.exe uninstall-autostart` (dữ liệu vẫn giữ nguyên).
+- Đừng di chuyển hay đổi tên `afing.exe` sau khi cài; nếu cần thì gỡ, chuyển, rồi cài lại.
+- Khi afing đang chạy nền thì không bấm đúp `afing.exe` nữa (cổng 8080 đã bị dùng); chỉ cần mở
+  dashboard trong trình duyệt.
+
+Chạy từ mã nguồn thì dùng `python -m afing install-autostart` với cùng ý nghĩa.
+
 File exe không có chữ ký số nên lần đầu Windows SmartScreen sẽ cảnh báo (bấm More info > Run
 anyway), và một số phần mềm diệt virus có thể báo nhầm với file gói bằng PyInstaller.
 
