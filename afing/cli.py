@@ -185,11 +185,14 @@ def load_settings(argv, double_clicked: bool = False):
     args = build_parser().parse_args(argv)
     cfg_path = os.path.abspath(args.config or config.default_path())
     if args.command in ("run", "install-autostart", "notify-setup"):
-        if config.ensure(cfg_path):
-            print(f"Đã tạo file cấu hình mẫu: {cfg_path}")
-        added = config.upgrade(cfg_path)
-        if added:
-            print(f"Đã thêm thiết lập mới vào {cfg_path}: {', '.join(added)}")
+        try:
+            if config.ensure(cfg_path):
+                print(f"Đã tạo file cấu hình mẫu: {cfg_path}")
+            added = config.upgrade(cfg_path)
+            if added:
+                print(f"Đã thêm thiết lập mới vào {cfg_path}: {', '.join(added)}")
+        except OSError:
+            pass  # không có quyền ghi (vd thư mục Program Files): dùng cấu hình sẵn có / mặc định
     settings = config.load(cfg_path)
 
     explicit = {}
@@ -261,6 +264,16 @@ def run(argv, double_clicked: bool = False) -> int:
             config.set_values(cfg_path, section, {key: value})
         print(f"Cấu hình của bản chạy nền: {cfg_path}")
         return autostart.install(["--config", cfg_path], args.port)
+
+    if args.command == "run" and not args.no_web:
+        # Bấm đúp khi afing đã chạy nền: chỉ mở dashboard của bản đang chạy. Kiểm tra trước khi
+        # đụng tới database, vì người dùng thường có thể không có quyền ghi vào thư mục cài đặt.
+        url = f"http://localhost:{args.port}"
+        if already_running(url):
+            print(f"afing đang chạy sẵn. Dashboard: {url}")
+            if args.open_browser:
+                webbrowser.open(url)
+            return 0
 
     oui = OuiTable(os.path.join(os.path.dirname(os.path.abspath(args.db)), "oui.csv"))
 

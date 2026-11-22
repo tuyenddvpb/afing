@@ -22,6 +22,33 @@ Mở http://localhost:8080. Mặc định afing tự dò subnet của máy, qué
 | `python -m afing mdns` | In mọi thứ nghe được qua mDNS trong 12 giây (để thử) |
 | `python -m afing update-oui` | Tải bảng hãng sản xuất (OUI) mới nhất từ IEEE |
 
+## Dashboard
+
+- **Bảng thiết bị**: alias, loại, tên, IP, MAC, hãng/model, thời gian. Lọc theo Online, Offline,
+  Unknown (thiết bị lạ); tìm theo mọi trường. Trên điện thoại bảng chuyển thành dạng thẻ.
+- **Bấm vào một thiết bị** để mở trang chi tiết:
+  - sửa tên, **loại** (khi afing đoán sai hoặc để trống), **của ai**, ghi chú;
+  - đánh dấu **thiết bị quen**, và chọn cách báo riêng cho máy đó (luôn báo / không bao giờ báo);
+  - xem mọi thông tin afing biết (kể cả thông tin DHCP), **dải thời gian có mặt 14 ngày** và lịch sử;
+  - **gộp** vào thiết bị khác: dùng khi một máy đổi MAC và hiện thành dòng mới - dòng mới nhận
+    alias, tên, lịch sử của dòng cũ;
+  - **xoá** thiết bị cùng lịch sử.
+- **Thiết bị lạ**: thiết bị chưa được đánh dấu quen có nhãn "unknown"; nút "Mark all as known"
+  đánh dấu hết một lượt sau khi bạn đã rà danh sách.
+- **Ai đang ở nhà**: điền "Belongs to" cho điện thoại của từng người, dashboard hiện ai đang có mặt.
+- **Thanh trên cùng**: tạm tắt thông báo 1/8/24 giờ, xuất danh sách thiết bị và lịch sử ra CSV
+  (mở được bằng Excel), **Settings** (sửa `afing.cfg`, gửi tin thử, xem log), chọn ngôn ngữ
+  English / Tiếng Việt.
+
+Trang Settings và log chỉ mở được từ chính máy chạy afing, hoặc khi đã đặt mật khẩu.
+
+### Mật khẩu
+
+Nếu để `host = 0.0.0.0` cho máy khác trong mạng xem, hãy đặt `password` trong mục `[web]`. Trình
+duyệt sẽ hỏi tên đăng nhập và mật khẩu; tên gõ gì cũng được. Kết nối là HTTP thường (không mã
+hoá), nên mật khẩu này chỉ để chặn người trong mạng nhà mở nhầm, không đủ để đưa dashboard ra
+Internet.
+
 ## Cấu hình: file `afing.cfg`
 
 Mọi thiết lập nằm trong file `afing.cfg`, sửa bằng Notepad. File được tự tạo với giá trị mặc định
@@ -75,6 +102,26 @@ Tham số dòng lệnh tương ứng (xem đủ bằng `python -m afing --help`)
 Dashboard không có đăng nhập. Mặc định chỉ máy đang chạy afing mở được; với `--host 0.0.0.0`
 thì mọi máy trong LAN đều xem và đổi tên thiết bị được. Đừng mở cổng này ra Internet.
 
+## Cài đặt trên Windows
+
+Cách dễ nhất là dùng bộ cài **`afing-setup.exe`** (tải ở trang Releases, hoặc ở mục Artifacts của
+lần chạy workflow "Build Windows exe"):
+
+- cài vào `C:\Program Files\afing`, đăng ký tự chạy khi Windows khởi động và chạy ngay;
+- thêm biểu tượng afing ở **khay hệ thống** (cạnh đồng hồ): rê chuột để xem số thiết bị online,
+  bấm để mở dashboard;
+- gỡ bằng "Add or remove programs"; cấu hình và dữ liệu được giữ lại.
+
+Khi cài bằng bộ cài, cấu hình và database nằm trong thư mục cài đặt, nên hãy sửa thiết lập qua
+**Settings trên dashboard** (hoặc mở Notepad bằng quyền admin).
+
+**Cập nhật**: mỗi ngày afing hỏi GitHub một lần xem có bản mới và báo trên dashboard (tắt bằng
+`update_check = no`). Cài bản mới bằng `afing.exe update` trong Command Prompt quyền admin: lệnh
+này chỉ tải từ kho mã của afing và chỉ cài khi file khớp mã SHA-256 của bản phát hành.
+
+Phát hành bản mới (dành cho người giữ kho mã): đẩy một tag dạng `v1.2.0`; workflow sẽ build, thử
+và tạo bản phát hành kèm `afing-setup.exe`, `afing.exe`, `afing-tray.exe` và mã SHA-256.
+
 ## Đóng gói thành file .exe (Windows)
 
 Gói thành một file `afing.exe` duy nhất, chạy được trên máy Windows khác mà không cần cài Python.
@@ -86,7 +133,9 @@ File exe phải được build trên Windows. Có hai cách:
 
 Dùng trên máy đích:
 
-- Bấm đúp `afing.exe`: tự quét liên tục và mở dashboard trong trình duyệt.
+- Bấm đúp `afing.exe`: tự quét liên tục và mở dashboard trong trình duyệt. Nếu afing đã chạy nền
+  thì chỉ mở dashboard của bản đang chạy.
+- `afing-tray.exe` (đặt cạnh `afing.exe`) là biểu tượng khay hệ thống; `install-autostart` tự bật nó.
 - Muốn nghe DHCP (lấy tên iPhone...): bấm chuột phải > "Run as administrator".
 - Cấu hình (`afing.cfg`) và dữ liệu (`afing.db`, `oui.csv`) nằm cạnh file exe; chép cả thư mục nếu muốn mang theo lịch sử
   và alias.
@@ -110,8 +159,6 @@ http://localhost:8080; log ghi vào `afing.log` cạnh file exe.
   `afing.cfg` rồi chạy lại `afing.exe install-autostart`.
 - Tắt tự chạy: `afing.exe uninstall-autostart` (dữ liệu vẫn giữ nguyên).
 - Đừng di chuyển hay đổi tên `afing.exe` sau khi cài; nếu cần thì gỡ, chuyển, rồi cài lại.
-- Khi afing đang chạy nền thì không bấm đúp `afing.exe` nữa (cổng 8080 đã bị dùng); chỉ cần mở
-  dashboard trong trình duyệt.
 
 Chạy từ mã nguồn thì dùng `python -m afing install-autostart` với cùng ý nghĩa.
 
@@ -126,6 +173,10 @@ anyway), và một số phần mềm diệt virus có thể báo nhầm với fi
 | `arp` | `pip install scapy` + chạy bằng root/sudo (Windows cần thêm Npcap) | ARP scan chủ động, phát hiện rời mạng ngay ở các lượt quét kế tiếp. |
 
 `auto` (mặc định) dùng `arp` nếu đủ điều kiện, không thì dùng `passive`.
+
+Trên **Windows**, chế độ `passive` còn hỏi lại từng địa chỉ trong bảng ARP bằng hàm `SendARP` của
+hệ điều hành (không cần quyền admin hay Npcap) và chỉ giữ thiết bị còn trả lời, nên thiết bị rời
+mạng được phát hiện trong khoảng một phút thay vì nhiều phút.
 
 ## Thông báo ra điện thoại
 
@@ -145,6 +196,17 @@ python -m afing notify-setup
 
 Không cần khởi động lại afing: bản đang chạy (kể cả bản tự chạy nền) nhận cấu hình mới ở lượt
 quét kế tiếp. `notify-test` gửi lại tin thử; `notify-off` tắt và xoá cấu hình.
+
+Chọn báo cái gì (mục `[notify]`, hoặc Settings trên dashboard):
+
+| Thiết lập | Ý nghĩa |
+|---|---|
+| `new_device_alerts = yes` | Báo khi có thiết bị chưa từng thấy. Tin Telegram kèm hai nút để đánh dấu quen / lạ ngay. |
+| `presence_alerts = all` | Báo rời mạng / quay lại cho mọi thiết bị. `unknown` = chỉ thiết bị chưa đánh dấu quen; `none` = không báo. |
+| `quiet_hours = 23:00-07:00` | Không báo rời mạng / quay lại trong khoảng này. Thiết bị lạ mới vào vẫn được báo. |
+
+Từng thiết bị có thể đặt riêng trên dashboard: "luôn báo" (ví dụ camera, NAS - báo cả trong giờ
+yên lặng) hoặc "không bao giờ báo". Tạm tắt mọi thông báo bằng `/mute 2h` hoặc nút trên dashboard.
 
 Để không bị làm phiền bởi thiết bị chập chờn (điện thoại ngủ, sóng yếu):
 
@@ -181,6 +243,11 @@ telegram_commands = yes
 | `/report` | Tất cả thiết bị, online và offline |
 | `/online` | Chỉ thiết bị đang online |
 | `/offline` | Chỉ thiết bị đang offline |
+| `/who` | Ai đang ở nhà (theo trường "Belongs to" của thiết bị) |
+| `/find <chữ>` | Tìm thiết bị theo alias, tên, IP, MAC |
+| `/rename <alias> = <tên mới>` | Đổi tên thiết bị |
+| `/known <alias>` | Đánh dấu thiết bị quen |
+| `/mute 2h`, `/unmute` | Tạm tắt / bật lại thông báo (`30m`, `2h`, `1d`) |
 | `/help` | Danh sách lệnh |
 
 Bot chỉ trả thông tin thiết bị cho đúng cuộc trò chuyện có `telegram_chat_id` trong file cấu
@@ -251,6 +318,11 @@ Giới hạn:
   dùng MAC ngẫu nhiên cho từng Wi-Fi nên không tra được hãng.
 - **Trạng thái**: trực tuyến/ngoại tuyến, thời điểm thấy lần đầu và gần nhất.
 - **Sự kiện**: thiết bị mới, rời mạng, kết nối lại, đổi IP.
+
+## Ngôn ngữ
+
+`language = en` hoặc `vi` trong mục `[web]` đặt ngôn ngữ cho dashboard, tin nhắn và báo cáo.
+Dashboard còn có nút chọn ngôn ngữ riêng cho từng trình duyệt. Dòng lệnh và log luôn là tiếng Việt.
 
 ## Dữ liệu
 
