@@ -1,8 +1,9 @@
 """Bí danh tự động cho thiết bị: mỗi MAC được gán một loài vật trong rừng, dễ nhớ hơn dãy MAC.
 
 Bí danh được chọn theo hàm băm của MAC nên cùng một thiết bị luôn "xin" cùng một con vật (kể cả
-khi tạo lại database); nếu con đó đã có chủ thì lấy con kế tiếp còn trống. Hết danh sách thì
-thêm số: "Tiger 2", "Tiger 3"...
+khi tạo lại database); nếu con đó đã có chủ thì lấy con kế tiếp còn trống. Không bao giờ có hai
+thiết bị chung một bí danh. Có 100 loài (52 loài rừng, rồi 48 loài khác); chỉ khi hết cả 100
+mới phải thêm số: "Tiger 2", "Tiger 3"...
 """
 
 import hashlib
@@ -29,20 +30,39 @@ ANIMALS = [
     ("🐈", "Wildcat", "Mèo rừng"), ("🐎", "Mustang", "Ngựa hoang"), ("🐐", "Ibex", "Sơn dương"),
     ("🪲", "Beetle", "Bọ hung"), ("🦂", "Scorpion", "Bọ cạp"),
 ]
+# Dùng khi 52 loài trong rừng ở trên đã có chủ hết: các loài khác, vẫn mỗi loài một emoji riêng.
+EXTRA = [
+    ("🦁", "Lion"), ("🦓", "Zebra"), ("🦒", "Giraffe"), ("🦛", "Hippo"), ("🐪", "Camel"),
+    ("🦘", "Kangaroo"), ("🐨", "Koala"), ("🦙", "Llama"), ("🦩", "Flamingo"), ("🦢", "Swan"),
+    ("🐧", "Penguin"), ("🦭", "Seal"), ("🐬", "Dolphin"), ("🐳", "Whale"), ("🦈", "Shark"),
+    ("🐙", "Octopus"), ("🦀", "Crab"), ("🦞", "Lobster"), ("🦑", "Squid"), ("🪼", "Jellyfish"),
+    ("🦐", "Shrimp"), ("🐡", "Pufferfish"), ("🐠", "Angelfish"), ("🐟", "Trout"), ("🦤", "Dodo"),
+    ("🦣", "Mammoth"), ("🦃", "Turkey"), ("🪿", "Goose"), ("🐥", "Chick"), ("🐛", "Caterpillar"),
+    ("🦟", "Mosquito"), ("🪱", "Worm"), ("🪰", "Fly"), ("🐹", "Hamster"), ("🐰", "Rabbit"),
+    ("🐏", "Ram"), ("🐂", "Ox"), ("🫏", "Donkey"), ("🦪", "Oyster"), ("🐉", "Dragon"),
+    ("🦖", "Tyrannosaur"), ("🦕", "Brontosaur"), ("🦄", "Unicorn"), ("🐋", "Humpback"), ("🐀", "Rat"),
+    ("🐑", "Sheep"), ("🐖", "Pig"), ("🐄", "Cow"),
+]
 ICONS = {name: icon for icon, name, _ in ANIMALS}
+ICONS.update({name: icon for icon, name in EXTRA})
 LEGACY = {old: name for _, name, old in ANIMALS}
 
 
 def pick(mac: str, used: Iterable[str]) -> str:
     """Chọn bí danh chưa ai dùng cho `mac`."""
     used = set(used)
-    start = int(hashlib.sha1(mac.encode()).hexdigest()[:8], 16) % len(ANIMALS)
-    round_ = 1
+    seed = int(hashlib.sha1(mac.encode()).hexdigest()[:8], 16)
+    for pool in ([a[1] for a in ANIMALS], [a[1] for a in EXTRA]):
+        for i in range(len(pool)):
+            name = pool[(seed + i) % len(pool)]
+            if name not in used:
+                return name
+    # Hơn 100 thiết bị: hết loài để gán, buộc phải đánh số. Tên vẫn không trùng nhau.
+    pool = [a[1] for a in ANIMALS]
+    round_ = 2
     while True:
-        for i in range(len(ANIMALS)):
-            name = ANIMALS[(start + i) % len(ANIMALS)][1]
-            if round_ > 1:
-                name = f"{name} {round_}"
+        for i in range(len(pool)):
+            name = f"{pool[(seed + i) % len(pool)]} {round_}"
             if name not in used:
                 return name
         round_ += 1

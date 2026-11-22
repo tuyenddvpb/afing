@@ -59,6 +59,8 @@ class Database:
                     self._conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {kind}")
             self._migrate_labels()
             self._backfill_aliases()
+            self._conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_alias ON devices(alias)")
 
     def _migrate_labels(self) -> None:
         """Đổi các nhãn tiếng Việt mà bản cũ đã lưu (bí danh, "MAC ngẫu nhiên") sang nhãn hiện tại."""
@@ -72,12 +74,16 @@ class Database:
     def _backfill_aliases(self) -> None:
         """Gán bí danh cho các thiết bị chưa có (DB tạo từ bản cũ), theo thứ tự xuất hiện."""
         rows = self._conn.execute("SELECT mac, alias FROM devices ORDER BY first_seen, mac").fetchall()
-        used = {r["alias"] for r in rows if r["alias"]}
+        used = set()
         for r in rows:
-            if not r["alias"]:
-                name = alias.pick(r["mac"], used)
-                used.add(name)
+            # Chưa có bí danh, hoặc trùng với thiết bị xuất hiện trước nó: gán con vật mới.
+            if not r["alias"] or r["alias"] in used:
+                taken = used | {x["alias"] for x in rows if x["alias"]}
+                name = alias.pick(r["mac"], taken)
                 self._conn.execute("UPDATE devices SET alias=? WHERE mac=?", (name, r["mac"]))
+                used.add(name)
+            else:
+                used.add(r["alias"])
 
     def close(self) -> None:
         with self._lock:

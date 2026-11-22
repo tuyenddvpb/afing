@@ -449,12 +449,44 @@ class AliasTests(unittest.TestCase):
         self.assertEqual(alias.pick(mac, []), first)
         self.assertIn(first, alias.ICONS)
         self.assertNotEqual(alias.pick(mac, [first]), first)
-        used = set()
-        for i in range(len(alias.ANIMALS) * 2 + 3):
-            used.add(alias.pick(f"02:00:00:00:{i // 256:02x}:{i % 256:02x}", used))
-        self.assertEqual(len(used), len(alias.ANIMALS) * 2 + 3)
-        self.assertEqual(sum(1 for a in used if a.endswith(" 2")), len(alias.ANIMALS))
-        self.assertEqual(len(alias.ICONS), len(alias.ANIMALS))  # không trùng tên
+        forest, extra = len(alias.ANIMALS), len(alias.EXTRA)
+        order = []
+        for i in range(forest + extra + forest + 3):
+            order.append(alias.pick(f"02:00:00:00:{i // 256:02x}:{i % 256:02x}", order))
+        self.assertEqual(len(set(order)), len(order))                      # không bao giờ trùng
+        forest_names = {a[1] for a in alias.ANIMALS}
+        self.assertEqual(set(order[:forest]), forest_names)                # loài rừng trước
+        self.assertEqual(set(order[forest:forest + extra]), {a[1] for a in alias.EXTRA})
+        self.assertEqual(forest + extra, 100)
+        self.assertTrue(all(a.endswith(" 2") for a in order[100:100 + forest]))
+        self.assertTrue(all(a.endswith(" 3") for a in order[-3:]))
+        # 100 loài, 100 tên khác nhau, 100 emoji khác nhau
+        self.assertEqual(len(alias.ICONS), 100)
+        self.assertEqual(len(set(alias.ICONS.values())), 100)
+
+    def test_database_enforces_unique_aliases_and_repairs_duplicates(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "t.db")
+            db = Database(path)
+            macs = [f"02:00:00:00:00:{i:02x}" for i in range(3)]
+            db.apply_scan({"10.0.0.1": macs[0]}, 1000, 45)
+            db.apply_scan({"10.0.0.1": macs[0], "10.0.0.2": macs[1], "10.0.0.3": macs[2]}, 2000, 45)
+            first = db.devices()
+            keeper = next(d["alias"] for d in first if d["mac"] == macs[0])
+            with self.assertRaises(sqlite3.IntegrityError):
+                with db._conn:
+                    db._conn.execute("UPDATE devices SET alias=?", (keeper,))
+            # giả lập một database hỏng: bỏ ràng buộc rồi cho cả ba trùng nhau
+            with db._conn:
+                db._conn.execute("DROP INDEX idx_devices_alias")
+                db._conn.execute("UPDATE devices SET alias=?", (keeper,))
+            db.close()
+            db = Database(path)
+            fixed = {d["mac"]: d["alias"] for d in db.devices()}
+            db.close()
+            self.assertEqual(fixed[macs[0]], keeper)        # thiết bị xuất hiện trước giữ con vật
+            self.assertEqual(len(set(fixed.values())), 3)
 
     def test_icon(self):
         self.assertEqual(alias.icon("Tiger"), "🐯")

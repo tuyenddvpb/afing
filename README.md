@@ -84,7 +84,9 @@ Giới hạn:
 
 - **IP, MAC**: từ ARP.
 - **Alias**: mỗi thiết bị được tự gán một bí danh là loài vật trong rừng (🐿️ Squirrel, 🦉 Owl...) để dễ
-  nhận ra mà không phải tự đặt tên. Bí danh gắn với địa chỉ MAC và lưu trong database, nên thiết
+  nhận ra mà không phải tự đặt tên. Mỗi con vật chỉ thuộc về đúng một thiết bị (database có ràng
+  buộc duy nhất): 52 loài rừng được gán trước, hết thì tới 48 loài khác, mỗi loài một emoji
+  riêng; chỉ khi có hơn 100 thiết bị mới phải thêm số ("Tiger 2"). Bí danh gắn với địa chỉ MAC và lưu trong database, nên thiết
   bị rời mạng rồi kết nối lại (kể cả với IP khác, kể cả sau khi khởi động lại afing) vẫn giữ đúng
   con vật cũ. Thiết bị đổi MAC (ví dụ iPhone để địa chỉ Wi-Fi bảo mật kiểu "Xoay vòng") sẽ được
   coi là thiết bị mới và nhận con vật khác.
