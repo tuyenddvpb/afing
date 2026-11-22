@@ -13,6 +13,9 @@ DefaultDirName={autopf}\afing
 DefaultGroupName=afing
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
+; afing.exe la ung dung 64-bit: cai vao Program Files (khong phai Program Files (x86))
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\dist
 OutputBaseFilename=afing-setup
 Compression=lzma2
