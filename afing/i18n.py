@@ -56,6 +56,10 @@ TEXT = {
         "unmuted": "🔔 Alerts resumed.",
         "btn_known": "✅ I know this device", "btn_unknown": "🚫 Unknown",
         "state_online": "online", "state_offline": "offline",
+        "device_of": "{vendor} device",
+        "private_mac": "unnamed device with a private (random) MAC",
+        "private_mac_hint": "Private MAC: usually a phone, tablet or laptop hiding its real address",
+        "unnamed": "unnamed device",
         "types": {
             "router": "Router", "network": "Network device", "computer": "Computer",
             "mobile": "Phone", "tablet": "Tablet", "tv": "TV", "media": "Media player",
@@ -114,6 +118,10 @@ TEXT = {
         "unmuted": "🔔 Đã bật lại thông báo.",
         "btn_known": "✅ Thiết bị quen", "btn_unknown": "🚫 Thiết bị lạ",
         "state_online": "trực tuyến", "state_offline": "ngoại tuyến",
+        "device_of": "thiết bị {vendor}",
+        "private_mac": "thiết bị chưa rõ tên, dùng MAC riêng tư (ngẫu nhiên)",
+        "private_mac_hint": "MAC riêng tư: thường là điện thoại, máy tính bảng hoặc laptop đang giấu địa chỉ thật",
+        "unnamed": "thiết bị chưa rõ tên",
         "types": {
             "router": "Router", "network": "Thiết bị mạng", "computer": "Máy tính",
             "mobile": "Điện thoại", "tablet": "Máy tính bảng", "tv": "Tivi",
@@ -132,6 +140,37 @@ def t(lang: str, key: str, **values) -> str:
 
 def type_label(lang: str, code: Optional[str]) -> Optional[str]:
     return TEXT.get(lang, TEXT["en"])["types"].get(code) if code else None
+
+
+def describe_unnamed(lang: str, dev: dict) -> str:
+    """Mô tả thay cho tên khi chưa biết tên thiết bị, dựa trên những gì afing biết về nó.
+
+    Ưu tiên: model > "iPhone" (điện thoại chạy iOS) > hãng sản xuất > ghi chú MAC riêng tư.
+    """
+    from .oui import RANDOM_MAC
+    if dev.get("model"):
+        return dev["model"]
+    kind = dev.get("custom_type") or dev.get("device_type")
+    if kind == "mobile" and (dev.get("os") or "").startswith("iOS"):
+        return "iPhone"
+    vendor = dev.get("vendor")
+    if vendor == RANDOM_MAC:
+        return t(lang, "private_mac")
+    if vendor:
+        return t(lang, "device_of", vendor=vendor)
+    return t(lang, "unnamed")
+
+
+def facts(lang: str, dev: dict) -> str:
+    """Dòng "hãng · model · hệ điều hành" (bỏ phần không biết) để giúp nhận ra thiết bị."""
+    from .oui import RANDOM_MAC
+    vendor = dev.get("vendor")
+    if vendor == RANDOM_MAC:
+        vendor = t(lang, "private_mac_hint")
+    model = dev.get("model")
+    if model and vendor and vendor.split()[0].lower() in model.lower():
+        vendor = None  # model đã nêu hãng, vd "Samsung Electronics UN43TU6900"
+    return " · ".join(filter(None, (vendor, model, dev.get("os"))))
 
 
 def ago(lang: str, seconds: float) -> str:

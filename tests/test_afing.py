@@ -1227,6 +1227,37 @@ class ReportTests(unittest.TestCase):
         self.assertEqual([report.duration(s) for s in (30, 300, 3600, 8000, 86400, 190000)],
                          ["under 1 min", "5 min", "1 hr", "2 hr 13 min", "1 day", "2 days 4 hr"])
 
+    def test_unnamed_devices_are_described_by_what_is_known(self):
+        from afing.oui import RANDOM_MAC
+        base = {"alias": "Ant", "ip": "10.0.0.5", "mac": "aa:aa:aa:aa:aa:05", "is_online": 1,
+                "first_seen": self.NOW - 600, "last_seen": self.NOW}
+        cases = [
+            (dict(vendor="Samsung Electronics Co.,Ltd", model="Samsung Electronics UN43TU6900",
+                  device_type="tv", os="Tizen"),
+             "🐜 Ant — Samsung Electronics UN43TU6900 · TV", "    Samsung Electronics UN43TU6900 · Tizen"),
+            (dict(vendor="Espressif Inc.", device_type="iot"),
+             "🐜 Ant — Espressif Inc. device · IoT device", "    10.0.0.5 · aa:aa:aa:aa:aa:05"),
+            (dict(vendor=RANDOM_MAC, device_type="mobile", os="iOS"),
+             "🐜 Ant — iPhone · Phone",
+             "    Private MAC: usually a phone, tablet or laptop hiding its real address · iOS"),
+            (dict(vendor=RANDOM_MAC),
+             "🐜 Ant — unnamed device with a private (random) MAC",
+             "    Private MAC: usually a phone, tablet or laptop hiding its real address"),
+            (dict(vendor="Apple, Inc.", hostname="MDs-phone"),            # có tên: vẫn kèm hãng
+             "🐜 Ant — MDs-phone", "    Apple, Inc."),
+            (dict(), "🐜 Ant — unnamed device", "    10.0.0.5 · aa:aa:aa:aa:aa:05"),
+        ]
+        for extra, head, second in cases:
+            with self.subTest(extra=extra):
+                lines = report.build([dict(base, **extra)], self.NOW, which="online").split("\n")
+                self.assertEqual(lines[4:6], [head, second])
+        vi = report.build([dict(base, vendor=RANDOM_MAC)], self.NOW, which="online", lang="vi")
+        self.assertIn("🐜 Ant — thiết bị chưa rõ tên, dùng MAC riêng tư (ngẫu nhiên)", vi)
+        # tin báo sự kiện cũng dùng mô tả này
+        alert = notify.describe_device(dict(base, vendor="Espressif Inc.", device_type="iot"))
+        self.assertEqual(alert, "🐜 Ant — Espressif Inc. device (IoT device)"
+                                "\n10.0.0.5 · aa:aa:aa:aa:aa:05")
+
     def test_split_message(self):
         text = "\n".join(f"line {i}" for i in range(400))
         parts = notify.split_message(text, 500)

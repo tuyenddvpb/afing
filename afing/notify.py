@@ -193,7 +193,10 @@ def in_quiet_hours(quiet: Optional[Tuple[int, int]], now: float) -> bool:
 
 
 def describe_device(dev: dict, lang: str = "en") -> str:
+    """Mô tả thiết bị trong tin báo sự kiện; chưa biết tên thì dùng model/hãng thay cho tên."""
     name = dev.get("custom_name") or dev.get("hostname")
+    if not name and (dev.get("vendor") or dev.get("model") or dev.get("os")):
+        name = i18n.describe_unnamed(lang, dev)
     head = " ".join(filter(None, (alias.icon(dev.get("alias")), dev.get("alias"))))
     if name:
         head = f"{head} — {name}" if head else name
@@ -201,8 +204,11 @@ def describe_device(dev: dict, lang: str = "en") -> str:
         i18n.type_label(lang, dev.get("custom_type") or dev.get("device_type")), dev.get("os"))))
     if kind:
         head += f" ({kind})"
-    detail = " · ".join(filter(None, (dev.get("ip"), dev.get("mac"), dev.get("vendor"))))
-    return f"{head}\n{detail}"
+    detail = " · ".join(filter(None, (dev.get("ip"), dev.get("mac"))))
+    facts = i18n.facts(lang, dict(dev, os=None))  # hệ điều hành đã nằm ở dòng đầu
+    if facts.lower() in head.lower():  # không lặp lại thứ đã nằm ở dòng tên
+        facts = ""
+    return "\n".join(filter(None, (head, facts, detail)))
 
 
 class Notifier:

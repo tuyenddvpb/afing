@@ -42,20 +42,25 @@ def clock(ts: float) -> str:
     return time.strftime("%d %b %H:%M", time.localtime(ts))
 
 
-def label(dev: dict) -> str:
-    """Tên gọi ngắn của thiết bị: "🐿️ Squirrel — MDs-phone"."""
+def label(dev: dict, lang: str = "en") -> str:
+    """Tên gọi ngắn của thiết bị: "🐿️ Squirrel — MDs-phone".
+
+    Chưa biết tên thì thay bằng mô tả suy từ model/hãng: "🐜 Ant — Apple, Inc. device".
+    """
     head = " ".join(filter(None, (alias.icon(dev.get("alias")), dev.get("alias"))))
-    name = dev.get("custom_name") or dev.get("hostname")
-    if name:
-        head = f"{head} — {name}" if head else name
-    return head or dev["mac"]
+    name = dev.get("custom_name") or dev.get("hostname") or i18n.describe_unnamed(lang, dev)
+    return f"{head} — {name}" if head else name
 
 
 def _line(dev: dict, when: str, lang: str) -> str:
-    """Ba dòng cho một thiết bị: tên/loại, rồi IP · MAC, rồi thời gian."""
+    """Một thiết bị trong báo cáo: tên/loại, hãng · model · hệ điều hành, IP · MAC, thời gian."""
     kind = i18n.type_label(lang, dev.get("custom_type") or dev.get("device_type"))
-    head = " · ".join(filter(None, (label(dev), kind)))
-    return f"{head}\n    {dev['ip']} · {dev['mac']}\n    {when}"
+    lines = [" · ".join(filter(None, (label(dev, lang), kind)))]
+    facts = i18n.facts(lang, dev)
+    if facts and facts.lower() not in lines[0].lower():  # không lặp lại thứ đã nằm ở dòng tên
+        lines.append("    " + facts)
+    lines += [f"    {dev['ip']} · {dev['mac']}", "    " + when]
+    return "\n".join(lines)
 
 
 def build(devices: List[dict], now: float, network: str = "", which: str = "all",
@@ -230,7 +235,7 @@ class TelegramCommands:
             return None, i18n.t(lang, "no_match", q=query)
         if len(found) > 1:
             return None, i18n.t(lang, "many_match", q=query, n=len(found),
-                                list="\n".join(label(d) for d in found[:10]))
+                                list="\n".join(label(d, lang) for d in found[:10]))
         return found[0], None
 
     # ----- xử lý một update -----
@@ -251,7 +256,7 @@ class TelegramCommands:
                 return []
             self.db.update_device(mac, {"known": action == "known"})
             return [(chat_id, T("marked_known" if action == "known" else "marked_unknown",
-                                alias=label(dev)))]
+                                alias=label(dev, lang)))]
 
         message = update.get("message") or update.get("channel_post") or {}
         chat_id = (message.get("chat") or {}).get("id")
@@ -315,7 +320,7 @@ class TelegramCommands:
             if not dev:
                 return [(chat_id, problem)]
             self.db.update_device(dev["mac"], {"known": True})
-            return [(chat_id, T("marked_known", alias=label(dev)))]
+            return [(chat_id, T("marked_known", alias=label(dev, lang)))]
         if command == "mute" and self.db:
             seconds = parse_span(rest) if rest else None
             if not seconds:
